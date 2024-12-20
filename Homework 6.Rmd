@@ -1,0 +1,289 @@
+---
+title: "RBI111 Homework 6"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Chosen dataset: Skeletal muscle - 20 healthy patients, 17 sarcopenia patients
+
+Experiment type: Expression profiling by high throughput sequencing
+
+GSEXXX number: GSE226151
+
+gplXXX number: GPL16791
+
+Code to download expression data:
+
+```{r download, warning = FALSE, message=FALSE}
+# Define download function for RNAseq dataset
+GEODataDownload <- function(DS, gpl, gsm){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  #### Set up DEG names ####
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&");
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+  # exraw <- tbl 
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # filter out excluded samples (marked as "X")
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  tbl <- tbl[ ,sel]
+  exraw <- tbl
+  # group membership for samples
+  gs <- factor(sml)
+  groups <- make.names(c("Ctrl", "Tx"))
+  levels(gs) <- groups
+  sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+  sample_df <- data.frame(Group = gs, Sample = colnames(tbl))
+  # pre-filter low count genes
+  # keep genes with at least N counts > 10, where N = size of smallest group
+  keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+  tbl <- tbl[keep, ]
+  
+  ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~Group)
+  ds <- DESeq(ds, test="Wald", sfType="poscount")
+  r <- results(ds, contrast=c("Group", groups[2], groups[1]), alpha=0.05, pAdjustMethod ="fdr")
+  tT <- r[order(r$padj)[1:length(r$padj)],]
+  tT <- merge(as.data.frame(tT), annot, by=0, sort=F)
+  tT <- subset(tT, select=c("GeneID","padj","pvalue","lfcSE","stat","log2FoldChange","baseMean","Symbol","Description"))
+  #### subset ####
+  ex2 <- data.table(subset(tT, select=c("GeneID", "Symbol", "Description", "log2FoldChange", "pvalue", "padj")))
+  #### Adjust column names ####
+  setnames(ex2, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+  #### Get Raw data ####
+  GeneID <- as.integer(rownames(exraw))
+  # GeneID <- as.integer(rownames(ex2))
+  exraw <- as.data.table(exraw)
+  # tbl <- as.data.table(tbl)
+  #### Update column names ####
+  exraw$ENTREZID <- GeneID
+  # tbl$ENTREZID <- GeneID
+  # ex <- exraw[ , c("ENTREZID", sel)]
+  #### merge FC and raw data together ####
+  mer <- merge(ex2, exraw, by = "ENTREZID")
+  return(list(Data=mer, Samples=sample_df))
+}
+
+# Execute download function
+RNA_Seq_Download <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "00000000000000000000XXXXXXXXXXXXXXXXXXX11111111111111111XX")
+# Extract gene expression data and sample info
+RNA_Seq_Data <- RNA_Seq_Download$Data
+sample_df <- RNA_Seq_Download$Samples
+```
+
+Code to load sample metadata:
+
+```{r manipulate, warning = FALSE, message=FALSE}
+library(dplyr)
+
+# Read sample metadata
+metadata_path <- "/Users/ritapecuch/Downloads/SraRunTable.csv"
+metadata <- read.table(metadata_path, sep=",", header=TRUE) %>%
+  select(Sample.Name, AGE, BMI)
+```
+
+## Question 1
+
+Objective: With the downloaded data set, fit a linear model using the continuous annotation as the dependent variable and each gene expression as the independent variable. Then calculate p-values for each linear model fit using an anova. This should generate a p-value for each gene. Next, calculate a corrected p-value using the Bonferroni correction and one using a FDR calculation. Annotate all three of these p-value calculations onto the data table that was downloaded. Next, generate scatter plots with genes ordered by the significance level for each independent p-value measurement, and the -log10(p-value) on the y-axis. Describe all these findings in addition to any changes in gene order by significance that are observed by the different p-value adjustments.
+
+The below code block extracts the continuous variable (BMI) value for each of the samples included in the downloaded gene expression dataset. A linear model is fit to the relationship between the independent variable, gene expression level, and the dependent value, BMI, for each gene. The p-value is calculated using ANOVA and saved. Next, corrected p-values are obtained for each gene using both the Bonferroni correction and the FDR calculation. Then, a scatterplot with -log10(p-value) versus p-value is generated for the original p-values, Bonferroni-corrected p-values, and FDR-corrected p-values.
+
+The scatter plot of the original p-values shows a wide range of p-values, with several significant p-values and several insignificant p-values. In contrast, the scatter plot of the FDR-corrected p-values shows all insignificant p-values between 0.9 and 1 and the scatter plot of the Bonferroni-corrected p-values shows all p-values equal to 1. These p-value differences indicate that when using a p-value adjustment to decrease the likelihood of false-positives, the number of statistically significant results for the association between gene expression level and BMI in this dataset is 0. There are several false-positives present in this dataset for the association between gene expression level and BMI. Because all of the Bonferroni-adjusted p-values are equal to 1, there was no difference in gene order by significance between the unadjusted p-values and the Bonferroni-adjusted p-values. There also does not appear to be any differences in gene order by significance between the unadjusted p-values and the FDR-adjusted p-values, but there are many genes that have different unadjusted p-values but the same FDR-adjusted p-values.
+
+``` {r q1, warning=FALSE}
+library(dplyr)
+
+# Match BMIs to samples
+bmi_df <- metadata[metadata$Sample.Name %in% names(RNA_Seq_Data), ]
+bmis <- bmi_df$BMI
+names(bmis) <- bmi_df$Sample.Name
+# Get gene exp levels in same order as corresponding BMIs
+exp_df <- RNA_Seq_Data %>%
+  select(names(bmis))
+
+# Loop through genes
+for (row in c(1:nrow(RNA_Seq_Data))){
+  # Get gene exp levels
+  exp <- unlist(exp_df[row, ])
+  # Fit linear model, independent variable: gene expression, dependent variable: BMI
+  model <- lm(bmis ~ exp)
+  # Calculate p-value for linear fit
+  p_value <- anova(model)[1, "Pr(>F)"]
+  # Save p-value
+  RNA_Seq_Data[row, "P_Value"] <- p_value
+}
+
+# Corrected p-value using Bonferroni correction
+RNA_Seq_Data$P_Value_Bonferroni <- p.adjust(RNA_Seq_Data$P_Value, method = "bonferroni")
+# Corrected p-value using FDR calculation
+RNA_Seq_Data$P_Value_FDR <- p.adjust(RNA_Seq_Data$P_Value, method = "fdr")
+
+# Sort data by p-value
+sorted_df <- RNA_Seq_Data[order(RNA_Seq_Data$P_Value),]
+# Scatter plot of p-values: -log10(p-value) vs p_value
+plot(sorted_df$P_Value, -log10(sorted_df$P_Value), main="Scatter Plot of Unadjusted P-Values")
+
+# Sort data by Bonferroni-corrected p-value
+sorted_df_bon <- RNA_Seq_Data[order(RNA_Seq_Data$P_Value_Bonferroni),]
+# Scatter plot of p-values: -log10(p-value) vs p_value
+plot(sorted_df_bon$P_Value_Bonferroni, -log10(sorted_df_bon$P_Value_Bonferroni), main="Scatter Plot of Bonferroni Adjusted P-Values")
+
+# Sort data by FDR-corrected p-value
+sorted_df_fdr <- RNA_Seq_Data[order(RNA_Seq_Data$P_Value_FDR),]
+# Scatter plot of p-values: -log10(p-value) vs p_value
+plot(sorted_df_fdr$P_Value_FDR, -log10(sorted_df_fdr$P_Value_FDR), main="Scatter Plot of FDR Adjusted P-Values")
+```
+
+## Question 2
+
+Objective: For each gene, compare average gene expression levels between samples separated by the same samples used in the fold change calculation performed when the dataset was downloaded using a Mann-Whitney U test of significance. Calculate FDR for this set of p-values and compare it with the results of Bonferroni corrected number of significant genes for the same set of p-values. Annotate the differences of expression you calculated along with the p-values that were obtained onto the data table. Next, compare these results to the p-value that is obtained from the downloaded data set. Describe your findings in plain English.
+
+The below code block generates data frames of gene expression levels only in control samples and only in treatment samples. Then, the average expression level for each gene is calculated in both control and treatment samples, and these averages are used to calculate the ad-hoc fold change. Next, the Mann-Whitney U test is used to assess the significance of the differences in gene expression levels between control and treatment samples and the p-value is saved in the gene expression data frame. Corrected p-values are obtained for each gene using both the Bonferroni correction and the FDR calculation. Finally, the differences are calculated between the GEO-downloaded data and R calculations for each gene for the fold change, unadjusted p-value, Bonferroni-adjusted p-value, and FDR-adjusted p-value.
+
+The histogram of differences between the GEO-downloaded and R-calculated log2 fold changes shows that the wide majority of differences were within 0.5, and significantly more of these cases had a higher log2 fold change in the GEO-downloaded data. There are just a few cases where the R-calculated log2 fold change was up to 4 above or up to 2 below the GEO-downloaded log 2 fold change. The histogram of differences between the GEO-downloaded and R-calculated unadjusted p-values shows a roughly Gaussian distribution centered at 0. The histogram of differences between the GEO-downloaded adjusted p-values and R-calculated Bonferroni-adjusted p-values shows that the majority of the R-calculated Bonferroni adjusted p-values were greater than the corresponding GEO-downloaded adjusted p-values. The majority of differences were between 0 and 0.5, but there were still quite a few differences reaching up to 1. The histogram of differences between the GEO-downloaded adjusted p-values and the R-calculated FDR-adjusted p-values shows that the majority of the R-calculated FDR-adjusted p-values were greater than the corresponding GEO-downloaded adjusted p-values. The majority of differences were between 0 and 0.5, with a few cases where the differences reached up to 1.
+
+```{r q2, warning = FALSE}
+library(dplyr)
+
+control_samples <- sample_df[sample_df$Group == "Ctrl", "Sample"]
+exp_control <- RNA_Seq_Data %>%
+    select(control_samples)
+tx_samples <- sample_df[sample_df$Group == "Tx", "Sample"]
+exp_tx <- RNA_Seq_Data %>%
+    select(tx_samples)
+
+# Loop through genes
+for (row in c(1:nrow(RNA_Seq_Data))){
+  # Avg. gene expression level in control samples
+  exp_control_gene <- unlist(exp_control[row, ])
+  exp_control_avg <- mean(exp_control_gene, na.rm=T)
+  # Avg. gene expression level in treatment samples
+  exp_tx_gene <- unlist(exp_tx[row, ])
+  exp_tx_avg <- mean(exp_tx_gene, na.rm=T)
+  
+  # Ad-hoc fold change calculation
+  fold_change <- exp_tx_avg / exp_control_avg
+  # Mann-Whitney U test
+  wilcox_result <- wilcox.test(exp_control_gene, exp_tx_gene)$p.value
+  # Save results
+  RNA_Seq_Data[row, "Fold_Change"] <- fold_change
+  RNA_Seq_Data[row, "P_Value"] <- wilcox_result
+}
+
+# Corrected p-value using Bonferroni correction
+RNA_Seq_Data$P_Value_Bonferroni <- p.adjust(RNA_Seq_Data$P_Value, method = "bonferroni")
+# Corrected p-value using FDR calculation
+RNA_Seq_Data$P_Value_FDR <- p.adjust(RNA_Seq_Data$P_Value, method = "fdr")
+
+# Calculate differences between downloaded results and manually calculated results
+RNA_Seq_Data$log2FC_Diff <- RNA_Seq_Data$log2FoldChange - log2(RNA_Seq_Data$Fold_Change)
+RNA_Seq_Data$P_Value_Diff <- RNA_Seq_Data$pvalue - RNA_Seq_Data$P_Value
+RNA_Seq_Data$P_Bonferroni_Diff <- RNA_Seq_Data$padj - RNA_Seq_Data$P_Value_Bonferroni
+RNA_Seq_Data$P_FDR_Diff <- RNA_Seq_Data$padj - RNA_Seq_Data$P_Value_FDR
+
+# Plot distributions of calculation differences
+hist(RNA_Seq_Data$log2FC_Diff, main="log2 Fold Change Difference Distribution")
+hist(RNA_Seq_Data$P_Value_Diff, main="Unadjusted P-Value Difference Distribution")
+hist(RNA_Seq_Data$P_Bonferroni_Diff, main="Bonferroni-Corrected P-Value Difference Distribution")
+hist(RNA_Seq_Data$P_FDR_Diff, main="FDR-Corrected P-Value Difference Distribution")
+```
+
+## Question 3
+
+Objective: Compare results of significance of gene expression and patient age relationship as assessed by ANOVA on linear model fit (same as we did before) and by permutation approach. Do not analyze all genes. Use the most and least significant gene ordered by adjusted p-value that was calculated from the differential expression analysis performed when the dataset was downloaded. For permutation based significance assessment obtain distributions both of: a) regression coefficient for slope of the fit (as returned by coef) and b) variance explained by it (as returned by anova in “Sum Sq” attribute). Derive re-sampling-based p-values for both these statistics by comparing their values from original fit with their distributions simulated under the null hypothesis of no association between gene expression level and age (this is the null we implement by permuting ages and/or gene expressions!). Describe results in writing and present them in the form of histograms of simulated distributions. In summary, you will take the expression levels of the selected genes. For each gene, take a sample of the gene expression level across all samples (regardless of treatment). Then fit a linear model to the continuous variable and extract the slope of the linear model and the p-value calculated using an anova. Then compare these results to a linear model using all of the data (original lm). Calculate the percentage of times the permuted slope is greater than or equal to the actual slope and the number of times the permuted p-values and less than or equal to the actual p-value.
+
+The below code block sorts the gene expression data by ascending adjusted p-value and removes rows with an NA adjusted p-value to determine the most and least significant genes from the GEO-downloaded data. Then, for each of the two genes a linear model is fit to the relationship between the independent variable, gene expression level, and the dependent value, BMI. The regression coefficient for slope, explained variance, and p-value are calculated for the model. Next, a linear model is fit for the relationship between 10000 permutations of gene expression level and BMI. The regression coefficient for slope, explained variance, and p-value are calculated for each model. The distributions of slopes, explained variances, and p-values from the models of each permutation are plotted on a histogram. Finally, the percentage of times the permuted slope is greater than or equal to the actual slope and the percentage of times the permuted p-values and less than or equal to the actual p-value are calculated.
+
+In this analysis, the most significant gene identified by differential expression analysis in the GEO-downloaded data was the ATP5PB gene. The distribution of slopes for 10000 permutations of the relationship between ATP5PB expression level and BMI shows a roughly Gaussian distribution centered around 0. The percentage of times the permuted slope was greater than or equal to the actual slope is printed below. Having a low percentage of times that the permuted slope is greater than or equal to the actual slope is consistent with a small p-value, which is true in the case of the ATP5PB gene. The distribution of explained variances for 10000 permutations of the relationship between ATP5PB expression level and BMI shows that the majority of cases had sum of squares of less than 10, but ranging up to over 100. The distribution of p-values for 10000 permutations of the relationship between ATP5PB expression level and BMI shows a roughly uniform distribution. The percentage of times the permuted p-values were less than or equal to the actual p-value is printed below. Having a low percentage of times that the permuted p-value is less than or equal to the actual p-value is consistent with a small actual p-value, which is true in the case of the ATP5PB gene.
+
+The least significant gene identified by differential expression analysis in the GEO-downloaded data was the PDE4DIPP2 gene. The distribution of slopes for 10000 permutations of the relationship between PDE4DIPP2 expression level and BMI shows a roughly Gaussian distribution centered around 0, but with a much narrower range of values than seen with ATP5PB expression. The percentage of times the permuted slope was greater than or equal to the actual slope is printed below. Having a higher percentage of times that the permuted slope is greater than or equal to the actual slope is consistent with a larger p-value, which is true in the case of the PDE4DIPP2 gene compared to the ATP5PB gene.The distribution of explained variances for 10000 permutations of the relationship between PDE4DIPP2 expression level and BMI shows that the majority of cases had sum of squares of less than 50, but ranging up to over 100. The distribution of p-values for 10000 permutations of the relationship between PDE4DIPP2 expression level and BMI shows a roughly uniform distribution. The percentage of times the permuted p-values were less than or equal to the actual p-value is printed below. Having a higher percentage of times that the permuted p-value is less than or equal to the actual p-value is consistent with a higher actual p-value, which is true in the case of the PDE4DIPP2 gene compared to the ATP5PB gene.
+
+```{r q3 ref, warning = FALSE}
+# Sort expression data from most to least significant gene by adjusted p-value and filter out NA results
+sorted_seq_data <- RNA_Seq_Data[!is.na(RNA_Seq_Data$padj), ]
+sorted_seq_data <- sorted_seq_data[order(sorted_seq_data$padj),]
+# Select most and least significant gene
+sorted_seq_data <- sorted_seq_data[c(1, nrow(sorted_seq_data)),]
+# Gene expression levels in same order as corresponding BMIs
+sorted_exp_df <- sorted_seq_data %>%
+    select(names(bmis))
+
+# Loop through genes to get linear model using all data
+for (row in c(1:nrow(sorted_seq_data))){
+  # Get gene name
+  gene <- unlist(sorted_seq_data[row, "SYMBOL"])
+    
+  # Get gene exp levels
+  exp <- unlist(sorted_exp_df[row, ])
+  # Fit linear model, independent variable: gene expression, dependent variable: BMI
+  model <- lm(bmis ~ exp)
+  
+  # Regression coefficient for slope
+  coef_slope <- coef(model)[2]
+  # Variance explained by model
+  anova_results <- anova(model)
+  sum_sq <- anova_results[1, "Sum Sq"]
+  # Significance of model
+  p_value <- anova_results[1, "Pr(>F)"]
+  
+  # Save results
+  sorted_seq_data[row, "Coef_Slope"] <- coef_slope
+  sorted_seq_data[row, "Var_Exp"] <- sum_sq
+  sorted_seq_data[row, "P_Value"] <- p_value
+  
+  coef_slopes <- c()
+  sum_sqs <- c()
+  p_values <- c()
+  # Perform 10,000 permutations
+  for ( i in 1:10000 ) {
+    # Get permutation of gene exp levels
+    exp_perm <- sample(exp)
+    
+    # Fit linear model, independent variable: gene expression, dependent variable: BMI
+    model_perm <- lm(bmis ~ exp_perm)
+    
+    # Regression coefficient for slope
+    coef_slope_perm <- coef(model_perm)[2]
+    # Variance explained by model
+    anova_results_perm <- anova(model_perm)
+    sum_sq_perm <- anova_results_perm[1, "Sum Sq"]
+    # Significance of model
+    p_value_perm <- anova_results_perm[1, "Pr(>F)"]
+    
+    # Save results
+    coef_slopes <- c(coef_slopes, coef_slope_perm)
+    sum_sqs <- c(sum_sqs, sum_sq_perm)
+    p_values <- c(p_values, p_value_perm)
+  }
+  
+  # Plot distributions of permutation statistics
+  hist(coef_slopes, main=paste0("Slope Distribution of 10000 Permutations for BMI ~ ", gene))
+  hist(sum_sqs, main=paste0("Explained Variance Distribution of 10000 Permutations for BMI ~ ", gene))
+  hist(p_values, main=paste0("P-Value Distribution of 10000 Permutations for BMI ~ ", gene))
+  
+  # Percentage of times the permuted slope is greater than or equal to the actual slope
+  sig_perm_slopes <- coef_slopes[abs(coef_slopes) >= abs(coef_slope)]
+  perm_slope_pct <- (length(sig_perm_slopes) / 10000) * 100
+  # Percentage of times the permuted p-values are less than or equal to the actual p-value
+  sig_perm_p_values <- p_values[p_values <= p_value]
+  perm_p_value_pct <- (length(sig_perm_p_values) / 10000) * 100
+  
+  print(paste0("Percentage of times the permuted slope is greater than or equal to the actual slope for gene ", gene, ": ", perm_slope_pct,"%. Percentage of times the permuted p-values are less than or equal to the actual p-value for gene ", gene, ": ", perm_p_value_pct, "%"))
+}
+```

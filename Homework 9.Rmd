@@ -1,0 +1,294 @@
+---
+title: "RBIF111 Homework 9"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Chosen dataset: Skeletal muscle in 10 healthy patients, 10 pre-sarcopenia patients, and 10 sarcopenia patients
+
+Experiment type: Expression profiling by high throughput sequencing
+
+GSEXXX number: GSE226151
+
+gplXXX number: GPL16791
+
+Code to download expression data (without and with normalization applied):
+
+```{r download, message = FALSE, warning = FALSE}
+# Define download function for RNAseq dataset
+GEODataDownload <- function(DS, gpl, gsm, batch_correction=FALSE){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  # Set up query parameters and path for expression data
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&")
+  # Get expression data
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+  exraw <- tbl 
+  # Get annotation data
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # Subset to only needed tables
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  tbl <- tbl[ ,sel]
+  # Split into groups
+  gs <- factor(sml)
+  groups <- make.names(c("Ctrl", "Tx1", "Tx2"))
+  levels(gs) <- groups
+  sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+  keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+  tbl <- tbl[keep, ]
+  if (length(unique(gs)) == 1){
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~1)
+  } else{
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~Group)
+  }
+  # Obtain normalized count values
+  if (batch_correction){
+    est <- estimateSizeFactors(ds)
+    NormCounts <- counts(est, normalized = TRUE)
+  } else{
+    NormCounts <- tbl
+  }
+
+  # Merge expression and annotation data
+  tT <- merge(as.data.frame(NormCounts), annot, by=0, sort=F)
+  # Adjust column names
+  setnames(tT, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+  return(tT)
+}
+
+# Execute download function
+RNA_Seq_Data <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "00000XXXXX00000XXXXX11111XXXXX11111XXXX22222XXXXXXX22222XX")
+# Download normalized data
+RNA_Seq_Data_norm <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "00000XXXXX00000XXXXX11111XXXXX11111XXXX22222XXXXXXX22222XX", batch_correction=TRUE)
+```
+
+Code to load sample metadata and assign numerical values to categorical variables (to be compatible with plotting):
+
+```{r manipulate, warning = FALSE, message=FALSE}
+library(dplyr)
+
+# Read sample metadata
+metadata_path <- "/Users/ritapecuch/Desktop/Brandeis/RBIF111/Week 9/metadata.csv"
+metadata <- read.table(metadata_path, sep=",", header=TRUE) %>%
+  select(Sample.Name, sex, disease_state, AGE, BMI)
+# Filter metadata for only downloaded samples
+metadata <- metadata[metadata$Sample.Name %in% names(RNA_Seq_Data),]
+# Assign numerical values for categorical variables
+metadata$sex_cat <- ifelse(metadata$sex == "female", 1, 2)
+metadata$disease_cat <- case_when(metadata$disease_state == "sarcopenia" ~ 2,
+                                metadata$disease_state == "pre-sarcopenia" ~ 1,
+                                .default = 3
+                                  )
+```
+
+## Question 1
+
+Objective: Describe the conceptual methodology behind a PCA analysis.
+
+Principal component analysis (PCA) is the transformation of a dataset to a system of coordinates that provides the best explanation for the variance present in the data. It is a type of dimensionality reduction technique, which reduces the number of features in a dataset to capture the data's most important properties. This is done by finding combinations of variables that account for as much variance as possible. PCA looks at the covariances between variables and then looks for linear transformations (rotations) of the variables such that the transformed variables are not correlated. PCs are the rotated coordinate axes and the rotation matrix specifies the linear combinations of the original variables that are the PCs. 2-3 PCs can be visualized on a scatterplot to look for directions in the data that contain the greatest variance.
+
+## Question 2
+
+Objective: Perform a PCA on the raw values of the data you downloaded, using a) top 100, b) top 1000 genes with highest variance. For both analyses, find the number of principal components accounting for most variance in the data, e.g. 50% or 75% (total variance is the sum of variances along all PCs; sum of variances of k first principal components is the part they “account” for).Describe how much this number of dimensions explaining most of the variance in the data changes for different number of genes considered. Examine structure in the data as revealed by visualizing in PC projection. Color points by any annotation features available (e.g. treatment, sex, batch, etc…) in a scatter plot (a 3D scatter plot will be best). Describe your findings. Repeat this analysis with normalized data and compare the results. Describe which version produces the best results and explain why.
+
+The below code block orders the non-normalized and normalized gene expression data in order of descending variance. For each of these datasets, PCA is then performed on both the top 100 and top 1000 genes with highest variance. For each scenario, the PCA summary is printed, which displays the percentage of variance explaiend by each PC. 3D scatterplots are generated to visualize the first 3 PCs, and data points are colored by either sex or disease state. In the final plot, data points are colored by sex and vary in size based on disease state.
+
+```{r q2, warning=FALSE, message=FALSE}
+options(rgl.useNULL=TRUE)
+library(rgl)
+
+# Function to compute variances and sort by descending variance
+compute_variance_df <- function(df){
+  df$Variance <- apply(df[metadata$Sample.Name], 1, var)
+  df <- df[order(df$Variance, decreasing = T),]
+  rownames(df) <- df$Row.names
+  return(df)
+}
+# Perform on both non-normalized and normalized data
+RNA_Seq_Data <- compute_variance_df(RNA_Seq_Data)
+RNA_Seq_Data_norm <- compute_variance_df(RNA_Seq_Data_norm)
+
+# Define PCA function
+pca_analysis <- function(df, num_genes){
+  top_data <- t(df[1:num_genes, metadata$Sample.Name])
+  pca<-prcomp(top_data,retx=TRUE,scale=TRUE) 
+  # Display percent of variance explained by each PC
+  print(summary(pca))
+
+  return(pca)
+}
+# Define plot functions
+plot_sex <- function(pca, num_genes, norm=FALSE){
+  plot3d(pca$x[,1:3], col=metadata$sex_cat, type = "s", main=paste0("PC Projection by Sex for ", num_genes, " Genes", if(norm) "- Normalized"))
+  rglwidget()
+}
+plot_disease <- function(pca, num_genes, norm=FALSE){
+  plot3d(pca$x[,1:3], col=metadata$disease_cat, type = "s", main=paste0("PC Projection by Disease State for ", num_genes, " Genes", if(norm) "- Normalized"))
+  rglwidget()
+}
+plot_sex_disease <- function(pca, num_genes, norm=FALSE){
+  plot3d(pca$x[,1:3], col=metadata$sex_cat, type = "s", radius = metadata$disease_cat, main=paste0("PC Projection by Sex (color) and Disease State (size) for ", num_genes, " Genes", if(norm) "- Normalized"))
+  rglwidget()
+}
+
+# Non-normalized data
+
+# Top 100 genes with highest variance
+pca <- pca_analysis(RNA_Seq_Data, 100)
+plot_sex(pca, 100)
+plot_disease(pca, 100)
+plot_sex_disease(pca, 100)
+# Top 1000 genes with highest variance
+pca <- pca_analysis(RNA_Seq_Data, 1000)
+plot_sex(pca, 1000)
+plot_disease(pca, 1000)
+plot_sex_disease(pca, 1000)
+
+# Normalized data
+
+# Top 100 genes with highest variance
+pca <- pca_analysis(RNA_Seq_Data_norm, 100)
+plot_sex(pca, 100, norm=TRUE)
+plot_disease(pca, 100, norm=TRUE)
+plot_sex_disease(pca, 100, norm=TRUE)
+# Top 1000 genes with highest variance
+pca <- pca_analysis(RNA_Seq_Data_norm, 1000)
+plot_sex(pca, 1000, norm=TRUE)
+plot_disease(pca, 1000, norm=TRUE)
+plot_sex_disease(pca, 1000, norm=TRUE)
+```
+
+The results of the pre-normalized data show that ~61% of the variation can be explained by the first 3 PCs, and that ~72% of the variation can be explained by the first 4 PCs for the 100-gene analysis. Similar results are obtained for the 1000-gene analysis, with a slight difference of ~65% of the variation explained by the first 3 PCs. The PC projection by sex does not appear to show any distinct stratification on neither the 100-gene nor 1000-gene analyses. The variation along PC1 and PC2 is more visually distinct in the 1000-gene analysis than the 100-gene analysis. The PC projection by disease state does not appear to show any distinct stratification on neither the 100-gene nor 1000-gene analyses. The variation along PC1 is more visually distinct in the 1000-gene analysis than the 100-gene analysis. The PC projection by sex (color) and disease state (size) does not appear to show any distinct stratification on neither the 100-gene nor 1000-gene analysis. The variation along PC1 is more visually distinct in the 1000-gene analysis than the 100-gene analysis.
+
+The results of the normalized data show that ~62% of the variation can be explained by the first 3 PCs, and that ~73% of the variation can be explained by the first 4 PCs for the 100-gene analysis. Similar results are obtained for the 1000-gene analysis, with a slight difference of ~66% of the variation explained by the first 4 PCs. Compare to the pre-normalized data, only slightly more variation is explained in the first few PCs, and therefore it is expected that some sort of normalization calculation was performed before the manual calculation was applied in this assignment. However, I expect that it is generally better to use normalized data for PCA analysis to eliminate batch-to-batch variation that could potentially be misleading on a PCA plot. The PC projection by sex does not appear to show any distinct stratification on neither the 100-gene nor 1000-gene analyses. The range of values along the PCs is smaller in the normalized 100-gene analysis than the pre-normalized 100-gene analysis. The PC projection by disease state does not appear to show any distinct stratification on neither the 100-gene nor 1000-gene analyses. The range of values along PC3 is greater in the 1000=gene analysis than the 100-gene analysis. The PC projection by sex (color) and disease state (size) does not appear to show any distinct stratification on neither the 100-gene nor 1000-gene analysis. The variation along PC1 is more visually distinct in the 1000-gene analysis than the 100-gene analysis.
+
+## Question 3
+
+Objective: Perform hierarchical clustering with top 100 and 1000 genes with highest variance as well as all genes in the selected data set. Visually compare and describe changes in the membership in the several top level clusters for each number of the genes chosen. Repeat this analysis using several clustering metrics including spearman correlation, ward, ward.D, ward.D2, single, complete, average, mcquitty, median or centroid. Compare these results, describe how each clustering method works, and compare the results to PCA results obtained above.
+
+The below code block performs hierarchical clustering using a variety of linkage methods to determine the distance between clusters. Because significant differences were not observed between PCA for pre-normalized versus normalized data, the pre-normalized data is used. The complete method uses the largest pairwise distance between any two points, where one belongs to one cluster and the other belongs to another, to determine the distance between clusters. The Spearman correlation method uses correlation-based distances. The centroid method uses the distance between cluster centroids, or the mean of the cluster's geometric coordinates, to determine the difference between clusters. Ward's method combines clusters resulting in the smallest increase of within-cluster variance at each iteration. The Ward.D method uses the sum of squared deviations from the cluster arithmetic mean as the measure of within-cluster variance, while the Ward.D2 method uses the sum of squared deviations from the cluster centroid as the measure of within-cluster variance. The single method uses the smallest distance between any two points, where one belongs to one cluster and the other belongs to another, to determine distance between clusters. The average method uses the average distance between all pairs of points from each cluster. The mcquitty method is similar to the average method but takes into account the weights of the observations. The median method uses the median distance between all pairs of points from each cluster.
+
+```{r q3, warning=FALSE}
+# Define hierarchical clustering function
+h_clustering_analysis <- function(df, num_genes){
+  top_data <- t(df[1:num_genes, metadata$Sample.Name])
+  # Method: complete
+  h <- hclust(dist(top_data))
+  plot(h, main=paste0("Cluster Dendogram for ", num_genes, " Genes - Complete"))
+  # Method: spearman correlation
+  h <- hclust(as.dist(1-cor(t(top_data), method="spearman")))
+  plot(h, main=paste0("Cluster Dendogram for ", num_genes, " Genes - Cor"))
+  # Method: centroid
+  h <- hclust(dist(top_data), method="centroid")
+  plot(h,  main=paste0("Cluster Dendogram for ", num_genes, " Genes - Centroid"))
+  # Method: ward.D
+  h <- hclust(dist(top_data), method="ward.D")
+  plot(h, main=paste0("Cluster Dendogram for ", num_genes, " Genes - Ward.D"))
+  # Method: ward.D2
+  h <- hclust(dist(top_data), method="ward.D2")
+  plot(h,  main=paste0("Cluster Dendogram for ", num_genes, " Genes - Ward.D2"))
+  # Method: single
+  h <- hclust(dist(top_data), method="single")
+  plot(h,  main=paste0("Cluster Dendogram for ", num_genes, " Genes - Single"))
+  # Method: average
+  h <- hclust(dist(top_data), method="average")
+  plot(h,  main=paste0("Cluster Dendogram for ", num_genes, " Genes - Average"))
+  # Method: mcquitty
+  h <- hclust(dist(top_data), method="mcquitty")
+  plot(h,  main=paste0("Cluster Dendogram for ", num_genes, " Genes - Mcquitty"))
+  # Method: median
+  h <- hclust(dist(top_data), method="median")
+  plot(h,  main=paste0("Cluster Dendogram for ", num_genes, " Genes - Median"))
+}
+
+# Top 100 genes with highest variance
+h_clustering_analysis(RNA_Seq_Data, 100)
+# Top 1000 genes with highest variance
+h_clustering_analysis(RNA_Seq_Data, 1000)
+# All genes
+h_clustering_analysis(RNA_Seq_Data, nrow(RNA_Seq_Data))
+```
+
+The results show differences in cluster membership of samples and varying numbers of distinct clusters for each method. Using the complete method, three main distinct clusters are observed with large distances between them, with each of these clusters having distinct clusters of its own. The dendograms are mostly similar when using the different numbers of genes. Using the Spearman's correlation method, two distinct clusters are observed. One of these clusters only contains two samples and the other is further divided into its own distinct clusters. The dendograms are fairly similar when using different numbers of genes, with slightly more levels of division in the 100-gene dendogram than the others. Using the centroid method, the distance between all clusters is extremely small and no meaningful conclusions can be drawn about trends in the data. The dendograms are mostly similar when using the different numbers of genes. Using the Ward.D method, two main distinct clusters are observed, with each having a few distinct clusters of its own. However, the distance between clusters is extremely small and there could be some noise interference. The group membership has slight differences in the 100-gene dendogram than the other two dendograms, but the small distances between clusters stays consistent. Using the Ward.D2 method, three main clusters are seen with large distances between them. Each of these clusters has a few distinct clusters of its own. The dendograms are mostly similar when using the different numbers of genes. Using the single method, the distance between all clusters is extremely small and no meaningful conclusions can be drawn about trends in the data in the 100-gene dendogram. However, the distance between clusters is much larger in the 1000-gene and all-gene dendograms than the 100-gene dendogram, which would be an interesting observation to explore further. Using the average method, the distances between clusters is large, but quite a few differences in cluster membership exist when comparing the 100-gene and 1000-gene dendograms. The 1000-gene and all-gene dendograms are mostly similar. Using the mcquitty method, two main distinct clusters are seen with large distances between each cluster. Each cluster has a few of its own distinct clusters. The dendograms are mostly similar when using the different numbers of genes. Using the median method, the distances between clusters is large, but quite a few differences in cluster membership exist when comparing the 100-gene and 1000-gene dendograms. The 1000-gene and all-gene dendograms are mostly similar.
+
+Based on the results, the linkage method that will be selected for question 4 will be Ward.D2 because this method produced clusters with greater separation than the other methods and major differences are not seen when adding more genes to the sample size.
+
+
+## Question 4
+
+Objective: Using the best clustering method you selected from question 3, identify the dendrogram that is the most stable across exponentially increasing slices of the data ordered by row variance. To answer this question, you will need to order the data by row variance. Then generate exponentially increasing slices of the data set (e.g. top 2^2=4 genes, top 4^2=16, 16^2 = 256 genes, ect… until the total number of records is accounted for). Then, for each slice, create a histogram and cut the tree at a specific height. Then count the number of times individual tree leafs are identified in the same branch across all slices. Then, return the tree with the greatest number of leaves that are similar to the rest of the trees.
+
+The below code block loops through the sequence of numbers (starting at i=4, then incremeting by i^2) until number of rows in the gene expression data is reached to perform hierarchical clustering with the Ward.D2 linkage method on different slice sizes of the expression data. For each slice, the tree is cut to separate the data into two clusters. The branch memberships of each tissue sample are stored in a matrix and a cluster dendogram is visualized with boxes around the two clusters where the tree was cut. To determine which tree had the greatest number of leaves similar to the rest of the trees, a row is added to the matrix containing the most common branch for each tissue sample. Then, a binary classifier is assigned to each element in the matrix representing whether or not the assigned branch was the same as the most common branch. The rows of the matrix are summed to determine the number of similarities for each tree.
+
+```{r q4, warning=FALSE}
+# Initialize slice size
+i <- 4
+# Keep track of branch memberships
+gene_branches <- NULL
+
+# Perform tree analysis on different slice sizes
+while (i <= nrow(RNA_Seq_Data)){
+  top_data <- t(RNA_Seq_Data[1:i, metadata$Sample.Name])
+  # Method: ward.D2
+  h <- hclust(dist(top_data), method="ward.D2")
+  # Cut tree into 2 and store in results matrix
+  cut <- cutree(h, 2)
+  if (is.null(gene_branches)){
+    gene_branches <- cut
+  } else{
+    gene_branches <- rbind(gene_branches, cut)
+  }
+
+  # Plot results
+  plot(h, main=paste0("Cluster Dendogram for ", i, " Genes - Ward.D2"))
+  rect.hclust(h,2)
+
+  # Break if last slice reached
+  if (i >= nrow(RNA_Seq_Data)) break
+  # Increment
+  i <- i ^ 2
+  if (i > nrow(RNA_Seq_Data)) i <- nrow(RNA_Seq_Data)
+}
+
+# Get most common branch for each sample
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+most_common <- apply(gene_branches, MARGIN=2, getmode)
+# Add to matrix
+gene_branches <- rbind(gene_branches, most_common)
+# Use logicals to indicate if belonging to most common branch
+most_common_row <- nrow(gene_branches)
+for(row in 1:(most_common_row-1)) {
+    for(col in 1:ncol(gene_branches)) {
+        most_common_branch <- gene_branches[most_common_row, col]
+        current_branch <- gene_branches[row, col]
+        # Assign logical
+        gene_branches[row, col] <- ifelse(current_branch == most_common_branch, 1, 0) 
+    }
+}
+
+# Get tree with most commonalities with other trees by getting row of matrix with greatest sum
+sums <- apply(gene_branches, MARGIN=1, sum)
+print(sums)
+```
+
+The results show that the tree with the greatest number of leaves in common with the rest of the trees was generated in the second iteration of the loop, which contained the top 16 genes with highest variance. Visualization of all four obtained trees shows that this tree appears to be intermediary between the 4-gene tree and the 256-gene and all-gene tree cluster memberships. The 256-gene and all-gene trees show that 5 of the tissue samples begin to show distinction from the remaining samples, which would be an interesting observation to explore further.

@@ -1,0 +1,305 @@
+---
+title: "RBIF111 Final Exam"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+Objective: Please construct a linear regression model with ER IHC (ER_Status_By_IHC) as the input and “overall survival months” as the output. Calculate the 95% confidence interval for the regression coefficients. Explain the coefficients, their 95% CI, and the associated p-value for TMB. (Only consider IHC positive and negative records, and remove NA, and indeterminate records).
+
+The below code block reads the mRNA expression data, which has a row for each gene and a column for each tissue sample, and the clinical data, which contains clinical information about each patient. The clinical data is filtered to exclude ER IHC statuses that will not be included in the analysis and a preview of the data is printed. A linear regression model is constructed for the relationship between EHR IHC status and overall survival months. The coefficients are extracted and printed below. The first coefficient of approximately 56.9 represents the y-intercept of a plot that would visualize the relationship between EHR IHC status and overall survival months. In this case, since there are only two possible options for EHR IHC status, the 56.9 means that the average overall survival months is 56.9 for the first possible EHR IHC status presented in the data, which as we can see by the data preview is the "Negative" status. The second coefficient of approximately -7.7 represents the slope of the line that would be plotted to visualize the relationship between EHR IHC status and overall survival months. In this case, since there are only two possible options for EHR IHC status, the -7.7 means that the second possible EHR IHC status presented in the data, the "Positive" status, results in an average of 7.7 less overall survival months. 
+
+The 95% confidence interval (CI) is calculated for the coefficients and printed below. The 95% confidence level means that 95% of the calculated CIs for a sample statistic should contain the true underlying value. In this case, the average overall survival months in the "Negative" patients, represented by the y-intercept, is captured in the 95% CI of approximately 43.7-70.1. The average difference in overall survival months in the "Positive" patients, represented by the slope, is captured in the 95% CI of approximately -22.6-7.1. The width of these CIs indicates that a significant relationship between EHR IHC status and overall survival months may not exist, especially given that the CI for slope contains both negative and positive values. This prediction is consistent with the associated p-value for the fit, which is calculated and printed below. The p-value of about 0.3 indicates about a 30% probability that the observed difference in average overall survival months between the two EHR IHC statuses is due to noise and random sampling.
+
+```{r q1, warning=FALSE}
+library(dplyr)
+
+# Read expression data
+setwd("~/Desktop/Brandeis/RBIF111/Week 10")
+exp_path <- paste0(getwd(), "/TCGA_BRCA_mRNA_expression.csv")
+exp_data <- read.csv(exp_path)
+row.names(exp_data) <- exp_data$X
+
+# Read clinical data
+clinical_path <- paste0(getwd(), "/TCGA_BRCA_clinical_data.csv")
+clinical_data <- read.csv(clinical_path)
+
+# Remove statuses that will not be considered
+clinical_data_clean <- clinical_data %>%
+  filter(ER_Status_By_IHC != "Indeterminate" & !is.na(ER_Status_By_IHC))
+# Get preview of data
+head(clinical_data_clean[, c("Patient_ID", "ER_Status_By_IHC", "Overall_Survival_Months")], 2)
+
+# Linear regression model: Overall Survival Months vs ER IHC
+lmfit <- lm(clinical_data_clean$Overall_Survival_Months ~ clinical_data_clean$ER_Status_By_IHC)
+print(coef(lmfit))
+# Calculate 95% CI
+conf_int <- confint(lmfit)
+print(conf_int)
+# Display associated p-value
+print(anova(lmfit))
+```
+
+## Question 2
+
+Objective: Please construct a cox regression model with ER IHC (ER_Status_By_IHC) as the input and “overall survival months” & “Overall_Survival_Status” as the output. Calculate the 95% Odds ratio for the regression model. Plot the Kaplan-Meier curve. Explain the %95 Odds ratio, and the associated p-value for TMB. (Only consider IHC positive and negative records, and remove NA, and indeterminate records).
+
+The below code block cleans the Overall_Survival_Status column of the clinical data to utilize binary classifiers. This binary classification works perfectly with the Surv() function to create the survival object. Next, a model is fitted between the survival object and EHR-IHC status and the Kaplan-Meier curve is plotted below. Upon visual inspection of the plot, there does not appear to be significant differences in overall survival time between the two EHR IHC statuses. Prior to about month 60, patients that have the Negative status have a slightly higher probability of surviving, however this changes between about months 60 and 80 and after about month 100. This prediction is consistent with the associated p-value for the cox regression model, which is generated and printed below. The p-value of about 0.9 indicates about a 90% probability that the observed differences in survival probabilities between the two EHR IHC statuses is due to noise and random sampling.
+
+Additionally, the 95% CI for the hazard ratio is calculated by exponentiating the confidence interval for the coefficient of the cox regression model just as the hazard ratio is calculated by exponentiating the coefficient. This means that 95% of the CIs calculated for the hazard ratio should contain the true underlying value. The hazard ratio is the exponential of the hazards for the two groups (Negative and Positive EHR IHC). The hazards are used to estimate the probability that an event, which is death in this case, occurs at any given time. The hazard ratio determined by this cox regression model of approximately 1.04 estimates a 4% greater probability of death in the EHR IHC Negative group compared to EHR IHC Positive, which is a small percentage. The width of the CI encompassing values both less than and greater than 1 is consistent with the Kaplan-Meier curve showing that at different time points, a different EHR IHC status group is more likely to have a greater probability of survival. 
+
+```{r q2, warning=FALSE}
+library(survival)
+
+# Clean overall survival status column
+clinical_data_surv <- clinical_data_clean
+clinical_data_surv$Overall_Survival_Status <- ifelse(clinical_data_surv$Overall_Survival_Status == "0:LIVING", 0, 1)
+
+# Generate survival object for Overall Survival Months/Status
+surv_obj <- Surv(clinical_data_surv$Overall_Survival_Months, clinical_data_surv$Overall_Survival_Status)
+# Fit model between survival and EHR IHC
+model <- survfit(surv_obj~clinical_data_surv$ER_Status_By_IHC)
+
+# Plot Kaplan-Meier survival curve
+plot_colors <- c("blue", "red")
+plot(model,
+ col=plot_colors,
+ xlab="Survival Time",
+ ylab="Probability"
+ )
+# Add legend for EHR IHC status stratification
+statuses <- unique(clinical_data_surv$ER_Status_By_IHC)
+legend(20,0.45,legend=statuses,lwd=1,col=plot_colors)
+
+# Cox regression model between survival and EHR IHC
+cox <- coxph(surv_obj~clinical_data_surv$ER_Status_By_IHC)
+print(cox)
+# Calculate the 95% CI for the hazard ratio
+hazard_ratio <- exp(coef(cox))
+hazard_ci <- exp(confint(cox))
+print(hazard_ci)
+```
+
+## Question 3
+
+Objective: Compare the linear regression model from question 1 with the Cox regression model from question 2. Which model demonstrates higher accuracy? Why is “Overall_Survival_Status” necessary when “overall survival months” already serves as an output?
+
+Both the linear regression model from question 1 and the Cox regression model come to the same conclusion that a significant relationship does not exist between EHR IHC status and overall survival months in this data, which is indicated by the high p-values calculated for both models. The Cox regression model is the more appropriate and accurate selection for this analysis because it takes into account the overall survival status, which is not considered in the linear regression model. This is important because for patients that are still alive, the overall survival months only represents their survival at the time of data collection and is not an accurate representation of the true overall survival months. An accurate survival time can only be obtained for patients that are deceased.
+
+## Question 4
+
+Objective: Identify the genes most significantly associated with ‘overall survival months’ and ‘Overall_Survival_Status’ in tumor samples. We will employ the holdout method for cross-validation by splitting the dataset into two parts: a training set comprising 60% of the data and a testing set comprising 40%. The model will be trained on the training set, tested on the testing set, and its performance evaluated. To simplify the analysis, we will use the median expression of each gene as a cutoff to categorize patients into high and low expression groups for input. Please write code to calculate p-values between outcomes and all genes in the mRNA expression table using Cox regression. All p-values for each gene need to be saved and corrected for multiple hypothesis testing. Please report the top 5 genes based on p-values in the training set and their corresponding p-values in the testing set. Please save the top 5 genes Kaplan-Meier curves for testing set results.
+
+The below code block splits the clinical data into a training set, which contains 60% of the patients, and a test set, which contains the remaining 40% of the patients. Both sets of clinical data are then expanded to have 1 row per sample because each row in the original dataset is per patient and has both a normal sample and a tumor sample. Genes with very small expression levels are filtered out and the median expression of each gene is calculated. The gene expression data is then split into a training set and test set by only keeping columns that are part of the training clinical data and test clinical data, respectively. 
+
+```{r q4 prep, warning=FALSE}
+library(dplyr)
+
+# Split clinical data into training set and test set
+nrows_training <- floor(nrow(clinical_data) * 0.6)
+clinical_data_training <- clinical_data[1:nrows_training, ]
+clinical_data_test <- clinical_data[(1+nrows_training):nrow(clinical_data), ]
+
+# Expand clinical datasets to have 1 row per sample
+normal_samples_training <- clinical_data_training[, c("Sample_ID_Normal", "Overall_Survival_Months", "Overall_Survival_Status")] %>%
+  rename(Sample_ID = Sample_ID_Normal)
+tumor_samples_training <- clinical_data_training[, c("Sample_ID_Tumor", "Overall_Survival_Months", "Overall_Survival_Status")] %>%
+  rename(Sample_ID = Sample_ID_Tumor)
+clinical_data_training <- rbind(normal_samples_training, tumor_samples_training)
+
+normal_samples_test <- clinical_data_test[, c("Sample_ID_Normal", "Overall_Survival_Months", "Overall_Survival_Status")] %>%
+  rename(Sample_ID = Sample_ID_Normal)
+tumor_samples_test <- clinical_data_test[, c("Sample_ID_Tumor", "Overall_Survival_Months", "Overall_Survival_Status")] %>%
+  rename(Sample_ID = Sample_ID_Tumor)
+clinical_data_test <- rbind(normal_samples_test, tumor_samples_test)
+
+# Filter out genes with very small expression levels
+all_samples <- c(clinical_data$Sample_ID_Tumor, clinical_data$Sample_ID_Normal)
+exp_data <- exp_data %>% 
+  filter(rowSums(exp_data[, intersect(names(exp_data), all_samples)]) >= ncol(exp_data), na.rm = TRUE)
+# Calculate median expression of each gene
+exp_data$Med_Expression <- apply(exp_data[intersect(names(exp_data), all_samples)], 1, median)
+exp_data <- exp_data %>%
+  filter(Med_Expression > 0)
+
+# Split expression data into training set and test set
+training_samples <- clinical_data_training$Sample_ID
+exp_data_training <- exp_data[, c(training_samples, "Med_Expression")]
+
+test_samples <- clinical_data_test$Sample_ID
+exp_data_test <- exp_data[, c(test_samples, "Med_Expression")]
+```
+
+The below code block cleans the Overall_Survival_Status column of the clinical data (both training and test sets) to utilize binary classifiers. This binary classification works perfectly with the Surv() function to create the survival object for both datasets. For each gene in the training expression data, a cox regression model is fitted between the survival object and the gene expression category for each sample. Each sample is classified as "High" or "Low" expression category based on whether or not the expression level in the sample is greater than or equal to the median expression level for the gene. The p-values for all of the models are saved to the training expression data frame. A multiple testing correction is then applied to the p-values and the data is sorted in order of ascending p-value, which sorts from most to least significant model.
+
+For each of the top 5 most significant genes in the training expression data, a cox regression model is fitted between the survival object created with the test set and the gene expression category for the test set. Each sample in the test set is classified as "High" or "Low" expression category based on whether or not the expression level in the sample is greater than or equal to the median expression level for the gene. The p-values for all of these models are saved to the data frame containing the top 5 most significant genes. Kaplan-Meier curves are also generated for each of these genes and displayed below. Finally, the top 5 genes, along with there uncorrected and corrected p-values for both the training and test sets are displayed below.
+
+The top 5 most significant genes identified have been printed below. However, none of these genes produced a significant multiple hypothesis corrected p-value for the relationship between gene expression category and overall survival months. This is true for both the training set and test set. The Kaplan-Meier curves for the test set for each of these genes also show no visually significant differences between overall survival months between high and low gene expression categories. For the top two most significant genes, a small distinction is visible between the two groups.
+
+```{r q4, warning=FALSE}
+library(survival)
+
+# Generate survival objects for training and test sets
+clinical_data_training$Overall_Survival_Status <- ifelse(clinical_data_training$Overall_Survival_Status == "0:LIVING", 0, 1)
+surv_obj_training <- Surv(clinical_data_training$Overall_Survival_Months, clinical_data_training$Overall_Survival_Status)
+
+clinical_data_test$Overall_Survival_Status <- ifelse(clinical_data_test$Overall_Survival_Status == "0:LIVING", 0, 1)
+surv_obj_test <- Surv(clinical_data_test$Overall_Survival_Months, clinical_data_test$Overall_Survival_Status)
+
+# Loop through all genes
+for (row in 1:nrow(exp_data_training)){
+  med_exp <- exp_data_training[row, "Med_Expression"]
+  exp_levels <- exp_data_training[row, training_samples]
+
+  # Classify samples as high or low expression
+  for (col in names(exp_levels)){
+    exp_levels[row, col] <- ifelse(exp_levels[row, col] >= med_exp, "High", "Low")
+  }
+  
+  # Perform analysis if samples exist for both high and low expression categories
+  if (length(unique(unlist(exp_levels[1, ]))) > 1){
+    # Cox regression model between survival and gene expression
+    cox <- coxph(surv_obj_training~unlist(exp_levels[1, ]))
+    # Extract and save p-value
+    p_value <- summary(cox)$logtest[["pvalue"]]
+    exp_data_training[row, "P_Value"] <- p_value
+  }
+}
+
+# Multiple testing correction for p-values
+exp_data_training$Corrected_P_Value <- p.adjust(exp_data_training$P_Value)
+# Sort data by corrected p-value
+exp_data_training_sorted <- exp_data_training[order(exp_data_training$Corrected_P_Value), ]
+
+# Top 5 data
+top_5_data <- exp_data_training_sorted[1:5, setdiff(names(exp_data_training), training_samples)]
+# Loop through top 5 genes to get results from test set
+for (gene in row.names(top_5_data)){
+  med_exp <- exp_data_test[gene, "Med_Expression"]
+  exp_levels <- exp_data_test[gene, test_samples]
+  
+  # Classify samples as high or low expression
+  for (col in names(exp_levels)){
+    exp_levels[gene, col] <- ifelse(exp_levels[gene, col] >= med_exp, "High", "Low")
+  }
+  # Cox regression model between survival and gene expression
+  cox <- coxph(surv_obj_test~unlist(exp_levels[1, ]))
+  # Extract and save p-value
+  p_value <- summary(cox)$logtest[["pvalue"]]
+  top_5_data[gene, "P_Value_Test"] <- p_value
+  
+  # Plot Kaplan-Meier survival curve
+  model <- survfit(surv_obj_test~unlist(exp_levels[1, ]))
+  plot_colors <- c("blue", "red")
+  plot(model,
+   col=plot_colors,
+   xlab="Survival Time",
+   ylab="Probability",
+   main=paste0("Kaplan-Meier Curve for Gene ", gene)
+   )
+  # Add legend for gene expression classification
+  statuses <- unique(unlist(exp_levels))
+  legend(20,0.45,legend=statuses,lwd=1,col=plot_colors)
+}
+
+# Multiple testing correction for test set p-values
+top_5_data$Corrected_P_Value_Test <- p.adjust(top_5_data$P_Value_Test)
+
+# Display data for top 5 genes
+print(top_5_data)
+```
+
+## Question 5
+
+Objective: Find a breast cancer dataset containing gene expression and survival data; cbioportal (https://www.cbioportal.org/) is a good starting point. Test the top 5 genes identified in question 4 and report whether high or low expression of each gene is associated with overall survival. Please save the top 5 genes Kaplan-Meier curves for this external validation results.
+
+Chosen dataset: Whole-exome sequencing of 817 Breast Invasive Carcinoma tumor/normal pairs. The Cancer Genome Atlas (TCGA) Breast Invasive Carcinoma Project. (https://www.cbioportal.org/study/summary?id=brca_tcga_pub2015)
+
+The below code block reads the mRNA expression data, which has a row for each gene and a column for each tissue sample, the patient clinical data, and the sample clinical data. Only columns necessary for analysis are kept. The patient and sample clinical data are merged to allow identification of overall survival status and months for each sample. The merged clinical data is then filtered for only samples included in the expression data, and the expression data is filtered for only samples included in the merged clinical data. Finally, the median expression across included samples is calculated for each gene.
+
+```{r q5 prep, warning=FALSE}
+library(dplyr)
+library(stringr)
+
+# Read expression data
+setwd("~/Desktop/Brandeis/RBIF111/Week 10")
+expr_path <- paste0(getwd(), "/data_mrna_agilent_microarray.txt")
+expr_data <- read.table(expr_path, header=TRUE) %>%
+  distinct(Hugo_Symbol, .keep_all=TRUE)
+row.names(expr_data) <- expr_data$Hugo_Symbol
+
+# Read clinical data for patients and samples
+clinical_path_pt <- paste0(getwd(), "/data_clinical_patient.txt")
+clinical_data_pt <- read.table(clinical_path_pt, skip=4, fill=TRUE, sep="\t", header=TRUE) %>%
+  select(PATIENT_ID, OS_STATUS, OS_MONTHS)
+
+clinical_path_sample <- paste0(getwd(), "/data_clinical_sample.txt")
+clinical_data_sample <- read.table(clinical_path_sample, skip=4, fill=TRUE, sep="\t", header=TRUE) %>%
+  select(PATIENT_ID, SAMPLE_ID)
+
+# Merge clinical data for patients and samples
+all_clinical_data <- merge(clinical_data_sample, clinical_data_pt)
+# Rename sample IDs to match format used in expression data
+all_clinical_data$SAMPLE_ID <- str_replace_all(all_clinical_data$SAMPLE_ID, "-", ".")
+# Keep only sample IDs found in expression data
+all_clinical_data <- all_clinical_data[all_clinical_data$SAMPLE_ID %in% names(expr_data), ]
+
+# Filter expression data to only keep patients with survival data
+expr_data <- expr_data[, all_clinical_data$SAMPLE_ID]
+# Calculate median gene expression
+expr_data$Med_Expression <- apply(expr_data[all_clinical_data$SAMPLE_ID], 1, median)
+```
+
+The below code block cleans the OS_STATUS column of the clinical data to utilize binary classifiers. This binary classification works perfectly with the Surv() function to create the survival object For each of the top 5 previously identified most significant genes, a cox regression model is fitted between the survival object and the gene expression category for each sample. Each sample is classified as "High" or "Low" expression category based on whether or not the expression level in the sample is greater than or equal to the median expression level for the gene. The p-values for all of the models are saved. A multiple testing correction is then applied to the p-values and the results are printed below. Additionally, Kaplan-Meier curves are generated for each of these genes and displayed below.
+
+The p-values for each gene differs between the previous data and the current data, and one of the genes present in the previous data is not present in the current data. The most significant gene in this analysis is A2BP1, while this same gene is not significant at all in the previous dataset. The Kaplan-Meier curves for each of these genes show only slight differences in overall survival months between high and low gene expression categories. The most visually significant difference is shown for A2BP1, which is consistent with the multiple hypothesis corrected p-value of approximately 0.05, which is borderline significant and would need to be reproduced in another analysis to be considered significant.
+
+```{r q5, warning=FALSE}
+# Generate survival object
+all_clinical_data$OS_STATUS <- ifelse(all_clinical_data$OS_STATUS == "0:LIVING", 0, 1)
+all_clinical_data$OS_MONTHS <- as.numeric(all_clinical_data$OS_MONTHS)
+surv_obj_2 <- Surv(all_clinical_data$OS_MONTHS, all_clinical_data$OS_STATUS)
+
+# Loop through top 5 genes
+for (gene in row.names(top_5_data)){
+  if (gene %in% row.names(expr_data)){
+    med_exp <- expr_data[gene, "Med_Expression"]
+    exp_levels <- expr_data[gene, all_clinical_data$SAMPLE_ID]
+    
+    # Classify samples as high or low expression
+    for (col in names(exp_levels)){
+      exp_levels[gene, col] <- ifelse(exp_levels[gene, col] >= med_exp, "High", "Low")
+    }
+    # Cox regression model between survival and gene expression
+    cox <- coxph(surv_obj_2~unlist(exp_levels[1, ]))
+    # Extract and save p-value
+    p_value <- summary(cox)$logtest[["pvalue"]]
+    top_5_data[gene, "P_Value_Ext"] <- p_value
+    
+    # Plot Kaplan-Meier survival curve
+    model <- survfit(surv_obj_2~unlist(exp_levels[1, ]))
+    plot_colors <- c("blue", "red")
+    plot(model,
+     col=plot_colors,
+     xlab="Survival Time",
+     ylab="Probability",
+     main=paste0("Kaplan-Meier Curve for Gene ", gene)
+     )
+    # Add legend for gene expression classification
+    statuses <- unique(unlist(exp_levels))
+    legend(20,0.45,legend=statuses,lwd=1,col=plot_colors)
+  }
+}
+
+# Multiple testing correction for test set p-values
+top_5_data$Corrected_P_Value_Ext <- p.adjust(top_5_data$P_Value_Ext)
+
+# Display data for top 5 genes
+print(top_5_data)
+```
