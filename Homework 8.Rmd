@@ -1,0 +1,277 @@
+---
+title: "RBIF111 Homework 8"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+Objective: Run logistic regression analysis on gene expression levels and the categorical annotation in the selected data set. Identify the gene with the most significant effect on patient gender by this approach. In other words, you will need to loop through all records in your selected data set and perform a logistic regression on each record using the categorical annotation as the outcome. Then, sort the results by p-value and show the top 5 most significant genes. Make a plot of the p-values that were returned. Next, perform multiple hypothesis testing using leave-n-out re-sampling. For each gene in the data set, leave one randomly selected sample out. Then save the p-value of the logistic regression analysis that was performed. Repeat this 100 times. Then calculate the average and variance across the re-sampled p-values. Describe and interpret the results. Finally, repeat this process with both the normalized and non-normalized samples. If your data set contains gene expression levels that are relatively consistent between all samples, you can artificially inflate or decrease the expression level by adding or subtracting the expression levels by a correction factor.
+
+Chosen dataset: Differential diagnosis between uterine leiomyoma and leiomyosarcoma (10 leiomyoma samples, 10 leiomyosarcoma samples)
+
+Experiment type: Expression profiling by high throughput sequencing
+
+GSEXXX number: GSE222045
+
+gplXXX number: GPL24676
+
+Code to download expression data:
+
+```{r download, warning = FALSE, message=FALSE}
+# Define download function for RNAseq dataset
+GEODataDownload <- function(DS, gpl, gsm){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  #### Set up DEG names ####
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&");
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # filter out excluded samples (marked as "X")
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  tbl <- tbl[ ,sel]
+  
+  tT <- merge(as.data.frame(tbl), annot, by=0, sort=F)
+  #### Adjust column names ####
+  setnames(tT, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+
+  return(tT)
+}
+
+# Execute download function
+RNA_Seq_Data <- GEODataDownload(DS = "GSE222045", gpl = "GPL24676", gsm = "0000000000000000000XXXXX0XXXXXXXX")
+```
+
+Code to load sample metadata:
+
+```{r manipulate, warning = FALSE, message=FALSE}
+library(dplyr)
+
+# Read sample metadata
+metadata_path <- "/Users/ritapecuch/Desktop/Brandeis/RBIF111/Week 8/differential_study_metadata.csv"
+metadata <- read.table(metadata_path, sep=",", header=TRUE) %>%
+  select(Sample.Name, disease_state)
+```
+
+The below code block filters the RNA sequencing experiment metadata to only include samples that were included in the download of the expression data. The disease diagnosis of each sample is assigned a binary classifier to be compatible with logistic regression. Then, a logistic regression model is fit for each gene between the diagnosis and gene expression level. The ANOVA test is performed to extract the p-value representing the significance of each fit and all p-values are added to the expression data. Next, the expression data is sorted by ascending p-value and NA p-values are filtered out. A table with the top 5 most significant genes is printed below, and they all have a p-value < 1.4e-7, representing a highly statistically significant relationship between diagnosis and the expression of these genes. 
+
+Finally, one histogram is plotted with the p-values from all of the logistic regression models and another is plotted with the p-values from only the top 1000 most significant genes. The histogram with all of the p-values shows a left-skewed distribution indicating that the most common range of p-values was < 0.05, but there are still several p-values that are not significant including a spike between p=0.2 and p=0.25. The histogram with only the lowest 1000 p-values shows a left-skewed distribution indicating that the most common range of p-values in this set was < 0.00005.
+
+```{r q1, warning=FALSE}
+library(dplyr)
+
+# Match diagnoses to samples and assign binary levels
+diag_df <- metadata[metadata$Sample.Name %in% names(RNA_Seq_Data), ]
+diag_df$disease_binary <- ifelse(diag_df$disease_state == "Leiomyoma", 0, 1)
+diags <- diag_df$disease_binary
+names(diags) <- diag_df$Sample.Name
+
+# Loop through genes
+for (row in c(1:nrow(RNA_Seq_Data))){
+  # Get gene exp levels in same order as corresponding diagnoses
+  exp_levels <- unlist(RNA_Seq_Data[row, names(diags)])
+  
+  # Fit logistic regression model
+  glm <- glm(diags ~ exp_levels, family = "binomial")
+  p_value <- anova(glm)[2, "Pr(>Chi)"]
+  
+  # Save p-value
+  RNA_Seq_Data[row, "P_Value"] <- p_value
+}
+
+# Sort results by p-value and display top 5 most significant genes
+sorted_exp_data <- RNA_Seq_Data[!is.na(RNA_Seq_Data$P_Value), ]
+sorted_exp_data <- sorted_exp_data[order(sorted_exp_data$ENTREZID),]
+sorted_exp_data <- sorted_exp_data[order(sorted_exp_data$P_Value),]
+display_exp_data <- sorted_exp_data[1:5, c("SYMBOL", "P_Value")]
+print(display_exp_data)
+
+# Plot distribution of p-values
+hist(sorted_exp_data$P_Value)
+# Plot distribution of p-values for top 1000 most significant genes
+hist(sorted_exp_data$P_Value[1:1000])
+```
+
+The below code block performs multiple hypothesis testing using 100 rounds of leave-n-out resampling for each of the 1000 most significant genes. For each round of resampling, one sample is randomly chosen to leave out. Then, a logistic regression model is fit between the diagnosis and gene expression level for all samples except for the sample that has been left out. The ANOVA test is performed to extract the p-value representing the significance of each fit. All p-values for the gene (from each round of resampling) are saved to a vector. The average and variance across the re-sampled p-values are calculated for each gene and saved to the expression data. Next, the expression data is sorted by ascending average p-value and NA average p-values are filtered out. A table with the top 5 most significant genes from this simulation is printed below. For the most part, the top 5 most significant genes are the same as the top 5 most significant genes seen in the previous simulation, but the average p-values are slightly higher than the original p-values. An extremely small variance in p-values is seen for each of the genes.
+
+Finally, one histogram is plotted with the averaged p-values from all of the gene logistic regression models and another is plotted with the p-value variances from all of the gene logistic regression models. The averaged p-value histogram shows a left-skewed distribution indicating that the most common range of p-values was < 0.0001. Compared to the previous simulation, the distribution shows average p-values that were mostly higher than the original p-values. The p-value variance histogram shows a very left-skewed distribution visualizing that even the highest observed p-value variance was very small.
+
+```{r q1 pt2, warning=FALSE}
+# Loop through 1000 most significant genes
+for (row in c(1:1000)){
+  # Keep track of p-values from each round
+  p_values_adj <- c()
+  
+  # 100 rounds of leave-n-out re-sampling
+  for (i in c(1:100)){
+    # Randomly select sample to leave out
+    index <- sample(c(1:length(diags)), 1)
+    diags_adj <- diags[-index]
+    exp_levels_adj <- unlist(sorted_exp_data[row, names(diags_adj)])
+    
+    # Fit logistic regression model
+    glm <- glm(diags_adj ~ exp_levels_adj, family = "binomial")
+    p_value_adj <- anova(glm)[2, "Pr(>Chi)"]
+    
+    # Save p-value by adding to vector of all p-values for gene
+    p_values_adj <- c(p_values_adj, p_value_adj)
+  }
+  
+  # Calculate average and variance across re-sampled p-values
+  p_value_avg <- mean(p_values_adj, na.rm=T)
+  p_value_var <- var(p_values_adj, na.rm=T)
+  # Save statistics
+  sorted_exp_data[row, "P_Value_Avg"] <- p_value_avg
+  sorted_exp_data[row, "P_Value_Var"] <- p_value_var
+}
+
+# Sort results by p-value and display top 5 most significant genes
+resorted_exp_data <- sorted_exp_data[!is.na(sorted_exp_data$P_Value_Avg), ]
+resorted_exp_data <- resorted_exp_data[order(resorted_exp_data$P_Value_Avg),]
+redisplay_exp_data <- resorted_exp_data[1:5, c("SYMBOL", "P_Value", "P_Value_Avg", "P_Value_Var")]
+print(redisplay_exp_data)
+
+# Plot distribution of p-value averages
+hist(resorted_exp_data$P_Value_Avg)
+# Plot distribution of p-value variances
+hist(resorted_exp_data$P_Value_Var)
+```
+
+Code to download normalized expression data:
+
+```{r download 2, warning=FALSE, message=FALSE}
+GEODataDownload_norm <- function(DS, gpl, gsm, batch_correction=FALSE){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  # Set up query parameters and path for expression data
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&")
+  # Get expression data
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+  exraw <- tbl 
+  # Get annotation data
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # Subset to only needed tables
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  tbl <- tbl[ ,sel]
+  # Split into groups
+  gs <- factor(sml)
+  groups <- make.names(c("Ctrl", "Tx"))
+  levels(gs) <- groups
+  sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+  keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+  tbl <- tbl[keep, ]
+  if (length(unique(gs)) == 1){
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~1)
+  } else{
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~Group)
+  }
+  # Obtain normalized count values
+  if (batch_correction){
+    est <- estimateSizeFactors(ds)
+    NormCounts <- counts(est, normalized = TRUE)
+  } else{
+    NormCounts <- tbl
+  }
+
+  # Merge expression and annotation data
+  tT <- merge(as.data.frame(NormCounts), annot, by=0, sort=F)
+  # Adjust column names
+  setnames(tT, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+  return(tT)
+}
+
+# Execute download function
+RNA_Seq_Data_norm <- GEODataDownload_norm(DS = "GSE222045", gpl = "GPL24676", gsm = "0000000000000000000XXXXX0XXXXXXXX", batch_correction=TRUE)
+```
+
+The below code block repeats the first simulation using normalized expression data. A logistic regression model is fit for each gene between the diagnosis and normalized gene expression level. The ANOVA test is performed to extract the p-value representing the significance of each fit and all p-values are added to the normalized expression data. Next, the normalized expression data is sorted by ascending p-value and NA p-values are filtered out. A table with the top 5 most significant genes is printed below, and they all have a p-value < 1.4e-7, representing a highly statistically significant relationship between diagnosis and the expression of these genes. Compared to the results from the non-normalized expression data, a few of the genes that were identified as top 5 most significant before normalization are no longer present as top 5 most significant after normalization.
+
+Finally, one histogram is plotted with the p-values from all of the logistic regression models and another is plotted with the p-values from only the top 1000 most significant genes. The histogram with all of the p-values shows a left-skewed distribution indicating that the most common range of p-values was < 0.05, but there are still several p-values that are not significant including a spike between p=0.2 and p=0.25. Compared to the earlier corresponding histogram with non-normalized expression data, major differences do not appear to be present in the distribution of significant p-values, but the distribution of non-significant (higher) p-values appears a bit more uniform. The histogram with only the lowest 1000 p-values shows a left-skewed distribution indicating that the most common range of p-values in this set was < 0.00005. Compared to the earlier corresponding histogram with non-normalized expression data, there appears to be slightly more significant p-values and the distribution of non-significant (higher) p-values appears a bit more uniform.
+
+```{r q1 pt3, warning=FALSE}
+# Loop through genes
+for (row in c(1:nrow(RNA_Seq_Data_norm))){
+  # Get gene exp levels in same order as corresponding diagnoses
+  exp_levels <- unlist(RNA_Seq_Data_norm[row, names(diags)])
+  
+  # Fit logistic regression model
+  glm <- glm(diags ~ exp_levels, family = "binomial")
+  p_value <- anova(glm)[2, "Pr(>Chi)"]
+  
+  # Save p-value
+  RNA_Seq_Data_norm[row, "P_Value"] <- p_value
+}
+
+# Sort results by p-value and display top 5 most significant genes
+sorted_exp_data_norm <- RNA_Seq_Data_norm[!is.na(RNA_Seq_Data_norm$P_Value), ]
+sorted_exp_data_norm <- sorted_exp_data_norm[order(sorted_exp_data_norm$P_Value),]
+display_exp_data_norm <- sorted_exp_data_norm[1:5, c("SYMBOL", "P_Value")]
+print(display_exp_data_norm)
+
+# Plot distribution of p-values
+hist(sorted_exp_data_norm$P_Value)
+# Plot distribution of p-values for top 1000 most significant genes
+hist(sorted_exp_data_norm$P_Value[1:1000])
+```
+
+## Question 2
+
+Objective: Time to event survival analysis.
+
+The below code block generates a survival object for the dialysis survival dataset. Patients that have died at the time of data collection are represented with event = 1, and patients that are still alive at the time of data collection are represented with event = 0. This binary classification works perfectly with the Surv() function to create the survival object. Next, a model is fitted between the survival object and disease type and plotted below. Visual inspection of the plot shows that survival time does not appear to be significantly different between the "renal", "hypertension", and "other" disease groups. The survival time appears to be slightly longer in the "congen" disease group due to higher probabilities of a patient being alive at each of the time points visualized on the plot. The survival time appears to be slightly shorter in the "diabetes" disease group due to lower probabilities of the patient being alive at each of the time points visualized on the plot. Finally, the Cox Proportional Hazards model is used to assess the significance between survival time and disease type. The results show a very statistically significant difference (p = 5.34e-6) between the survival times between "congen" and "diabetes" patients, which confirms the prediction made by visual inspection of the plot. Less extreme statistically significant differences (p between 0.006 and 0.015) are also observed between the survival times of the "congen" groups and the remaining disease groups.
+
+```{r q2, warning=FALSE}
+library(survival)
+
+# Read data
+data_path <- "/Users/ritapecuch/Desktop/Brandeis/RBIF111/Week 8/Dialysis.csv"
+dialysis_data <- read.table(data_path, sep=",", header=TRUE)
+
+# Generate survival object
+surv_obj <- Surv(dialysis_data$time, dialysis_data$event)
+# Fit model between survival and disease
+model <- survfit(surv_obj~dialysis_data$fac_disease)
+
+# Plot model
+plot_colors <- c('black', "blue", "red", "green", "purple")
+plot(model,
+ col=plot_colors,
+ xlab="Survival Time",
+ ylab="Probability"
+ )
+# Add legend for disease type stratification
+disease_types <- sort(unique(dialysis_data$fac_disease))
+legend(20,0.45,legend=disease_types,lwd=1,col=plot_colors)
+
+# Assess significance of relationship between disease type and survival
+coxph(surv_obj~dialysis_data$fac_disease)
+```

@@ -1,0 +1,275 @@
+---
+title: "RBIF111 Homework 2"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The dataset that will be used for this assignment is the Breast Cancer Wisconsin (Diagnostic) dataset. Due to the redundancy in features of this dataset, only the first instance of each feature will be analyzed in this assignment. For example, the features radius1, radius2, and radius3 exist for each record. In this assignment, only radius1 will be analyzed.
+
+The Diagnosis variable is a categorical variable with 2 possible values: M for "malignant" and B for "benign". The below code block reads the dataset into a dataframe and separates it into two different dataframes - one with only malignant records and one with only benign records.
+
+```{r prep data, warning = FALSE}
+setwd("/Users/ritapecuch/Downloads/breast+cancer+wisconsin+diagnostic")
+
+# Read dataset
+ml_data_path <- paste0(getwd(), "/wdbc.data")
+ml_col_names <- c("ID", "Diagnosis", "radius1", "texture1", "perimeter1", "area1", "smoothness1", "compactness1", "concavity1", "concave_points1", "symmetry1", "fractal_dimension1", "radius2", "texture2", "perimeter2", "area2", "smoothness2", "compactness2", "concavity2", "concave_points2", "symmetry2", "fractal_dimension2", "radius3", "texture3", "perimeter3", "area3", "smoothness3", "compactness3", "concavity3", "concave_points3", "symmetry3", "fractal_dimension3")
+ml_data <- read.table(ml_data_path, sep=",", col.names = ml_col_names)
+
+# Separate into benign and malignant groups
+benign_data <- ml_data[ml_data$Diagnosis == "B", ]
+malignant_data <- ml_data[ml_data$Diagnosis == "M", ]
+```
+
+## Question 1
+
+Objective: Perform normality tests for each data feature. At a minimum, these normality tests should include a Shapiro-Wilks normality test along with a qq-plot. Describe the results of these tests.
+
+The below block of code performs the Shapiro-Wilks normality test on each data feature as a whole as well as by outcome group and stores the results in a dataframe. The p-value of 0.05 is used, and when the p-value is less than 0.05 then it is inferred that the underlying distribution is not a normal distribution. Then, a QQ plot is created for each data feature as a whole as well as by outcome group. The closer all of the points are to the reference line, the more likely it is that a sample is from an underlying normal distribution.
+
+For the radius1 feature, a p-value of < 0.05 is observed for the sample as a whole and for the malignant group, indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. The benign group shows a normal distribution based on its p-value of > 0.05 and a QQ plot with all points close to the reference line. For the texture1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the perimeter1 feature, a p-value of < 0.05 is observed for the sample as a whole and for the malignant group, indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. The benign group shows a normal distribution based on its p-value of > 0.05 and a QQ plot with all points close to the reference line. For the area1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the smoothness1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the compactness1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the concavity1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the concave_points1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the symmetry1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line. For the fractal_dimension1 feature, a p-value of < 0.05 is observed for the sample as a whole, for the malignant group, and for the benign group - indicating a non-normal distribution. The corresponding QQ plots visualize points that deviate from the reference line.
+
+```{r q1, warning = FALSE}
+# Select first set of features to perform normality tests on (exclude ID and Diagnosis, as these will not need to be hypothesis tested)
+features <- ml_col_names[3:12]
+# Initialize sw_df variable to store results of Shapiro-Wilks normality test
+sw_df <- NULL
+
+# Loop through features
+for (feature in features){
+  # Perform Shapiro-Wilks normality test on column as a whole
+  sw_results_all <- shapiro.test(ml_data[[feature]])
+  dist_all <- ifelse(sw_results_all$p.value < 0.05, "Not normally distributed", "Normally distributed")
+  # Perform normality test on each outcome group
+  sw_results_benign <- shapiro.test(benign_data[[feature]])
+  dist_benign <- ifelse(sw_results_benign$p.value < 0.05, "Not normally distributed", "Normally distributed")
+  sw_results_malignant <- shapiro.test(malignant_data[[feature]])
+  dist_malignant <- ifelse(sw_results_malignant$p.value < 0.05, "Not normally distributed", "Normally distributed")
+  
+  # Add results to data frame
+  if (is.null(sw_df)){
+    sw_df <- data.frame(Feature=feature, 
+                        SW_Statistic_All=sw_results_all$statistic, 
+                        P_Value_All=sw_results_all$p.value,
+                        Distribution_All=dist_all,
+                        SW_Statistic_Benign=sw_results_benign$statistic, 
+                        P_Value_Benign=sw_results_benign$p.value,
+                        Distribution_Benign=dist_benign,
+                        SW_Statistic_Malig=sw_results_malignant$statistic, 
+                        P_Value_Malig=sw_results_malignant$p.value,
+                        Distribution_Malig=dist_malignant
+                        )
+  } else{
+    sw_df <- rbind(sw_df, 
+                   c(Feature=feature, 
+                     SW_Statistic_All=sw_results_all$statistic, 
+                        P_Value_All=sw_results_all$p.value,
+                        Distribution_All=dist_all,
+                        SW_Statistic_Benign=sw_results_benign$statistic, 
+                        P_Value_Benign=sw_results_benign$p.value,
+                        Distribution_Benign=dist_benign,
+                        SW_Statistic_Malig=sw_results_malignant$statistic, 
+                        P_Value_Malig=sw_results_malignant$p.value,
+                        Distribution_Malig=dist_malignant
+                     ))
+  }
+  
+  # Create QQ plot for column as a whole
+  qqnorm(ml_data[[feature]], main=paste0("Normal Q-Q Plot for Feature ", feature, " - All Outcomes"))
+  qqline(ml_data[[feature]])
+  # Create QQ plot for each outcome group
+  qqnorm(benign_data[[feature]], main=paste0("Normal Q-Q Plot for Feature ", feature, " - Benign"))
+  qqline(benign_data[[feature]])
+
+  qqnorm(malignant_data[[feature]], main=paste0("Normal Q-Q Plot for Feature ", feature, " - Malignant"))
+  qqline(malignant_data[[feature]])
+}
+
+# Print Shapiro-Wilks results for all features
+print(sw_df)
+```
+
+## Question 2
+
+Objective: Create a box plot with each column of the data set on the x-axis, the value of the columns on the y-axis, and colored by the outcome that is being studied.
+
+The below code block generates a box plot for each feature stratified by Diagnosis (B = "Benign", M = "Malignant"). For the radius1 feature, a higher median is observed in the malignant sample along with a slightly wider spread of values. For the texture1 feature, a higher median is observed in the malignant sample, and both samples show similar spreads of values with a few outliers. For the perimeter1 feature, a higher median is observed in the malignant sample along with a slightly wider spread of values. For the area1 feature, a higher median is observed in the malignant sample along with a wider spread of values. For the smoothness1 feature, a slightly higher median is observed in the malignant sample, with similar spreads in both samples. For the compactness1 feature, a higher median is observed in the malignant sample, with similar spreads in both samples. For the concavity1 feature, a higher median is observed in the malignant sample as well as a larger interquartile range. The benign sample has a larger overall spread due to the presence of several outiers. For the concave_points1 feature, a higher median is observed in the malignant sample as well as a wider spread. For the symmetry1 feature, a slightly higher median is observed in the malignant sample, and both samples have similar spreads. For the fractal_dimension1 feature, both samples have an appoximately equal median and a similar interquartile range. However, the benign sample has several more outliers than the malignant sample.
+
+```{r q2, warning = FALSE}
+# Loop through features
+for (feature in features){
+  # Generate boxplot
+  boxplot(ml_data[[feature]]~ml_data$Diagnosis, main=paste0("Box Plot for Feature ", feature), xlab="Diagnosis", ylab=feature)
+}
+```
+
+## Question 3
+
+Objective: Perform hypothesis tests comparing paired columns of the partitioned data set. You will need to determine which hypothesis test to perform based on your normality test results.
+
+The results from Question #1 show that all features analyzed in this dataset have a non-parametric distribution. Therefore, the hypothesis test that will be used is the Mann-Whitney U test. The below block of code performs the Mann-Whitney U test on each feature and adds the results to a data frame.
+
+All features except for fractal_dimension1 show a p-value of far less than 0.05, in fact, the p-value is far less than 0.01. This is an indicator that the null hypothesis may be rejected for each of these features, as it is very unlikely that the observed differences between samples are due to chance. The null hypothesis may be accepted for fractal_dimension1, although the p-value is only slightly > 0.5.
+
+```{r q3, warning = FALSE}
+# Initialize wilcox_df variable to store results of Mann-Whitney U test
+wilcox_df <- NULL
+
+# Loop through features
+for (feature in features){
+  wilcox_results <- wilcox.test(benign_data[[feature]], malignant_data[[feature]])
+  null_hypothesis <- ifelse(wilcox_results$p.value < 0.05, "Reject", "Accept")
+    
+  # Add results to data frame
+  if (is.null(wilcox_df)){
+    wilcox_df <- data.frame(Feature=feature,
+                        Wilcox_Statistic=wilcox_results$statistic,
+                        P_Value=wilcox_results$p.value,
+                        Null_Hypothesis=null_hypothesis
+                        )
+  } else{
+    wilcox_df <- rbind(wilcox_df,
+                   c(Feature=feature,
+                     Wilcox_Statistic=wilcox_results$statistic,
+                      P_Value=wilcox_results$p.value,
+                     Null_Hypothesis=null_hypothesis
+                     ))
+  }
+}
+
+# Visualize data frame
+print(wilcox_df)
+```
+
+## Question 4
+
+Objective: Select a column of the data set with the greatest variance and overlap between outcome groups. Take a random sampling of the data with different sample sizes (say, 10, 15, 20 samples) from both groups. Then perform a hypothesis test between both groups and retain the p-value. Repeat this process 1000 times. For each iteration, save the p-values in a vector called Pvals. Then plot the distribution of significance tests for each re-sampling. Repeat this process with the column with the least variance and overlap between outcome groups. Explain the results and the differences between both simulations.
+
+For each feature, the below code block calculates the overall sample variance, the sample variance of each outcome group, and the overlap range between outcome groups. The results show that the feature with the greatest variance and overlap between outcome groups is area1, and the feature with the least variance and overlap between outcome groups is fractal_dimension1.
+
+```{r q4 calculations, warning = FALSE}
+# Initialize stats_df variable to store results of Mann-Whitney U test
+stats_df <- NULL
+
+# Loop through features
+for (feature in features){
+  # Calculate overall sample variance
+  pop_var <- var(ml_data[[feature]])
+  
+  # Calculate sample variances of outcome groups
+  benign_var <- var(benign_data[[feature]])
+  
+  malig_var <- var(malignant_data[[feature]])
+  
+  # Calculate overlap between outcome groups
+  overlap_values <- intersect(benign_data[[feature]], malignant_data[[feature]])
+  overlap_range <- max(overlap_values) - min(overlap_values)
+  
+  # Add results to data frame
+  if (is.null(stats_df)){
+    stats_df <- data.frame(Feature=feature,
+                        All_Variance=pop_var,
+                        Benign_Variance=benign_var,
+                        Malignant_Variance=malig_var,
+                        Overlap_Range=overlap_range
+                        )
+  } else{
+    stats_df <- rbind(stats_df,
+                   c(Feature=feature,
+                     All_Variance=pop_var,
+                        Benign_Variance=benign_var,
+                        Malignant_Variance=malig_var,
+                        Overlap_Range=overlap_range
+                     ))
+  }
+}
+
+# Convert necessary columns to numeric type
+stats_df <- transform(stats_df, All_Variance = as.numeric(All_Variance), 
+               Benign_Variance = as.numeric(Benign_Variance),
+              Malignant_Variance = as.numeric(Malignant_Variance),
+              Overlap_Range = as.numeric(Overlap_Range)
+          )
+
+# Print statistics
+print(stats_df)
+
+print(paste0("Feature with highest overall variance: ", stats_df[stats_df$All_Variance == max(stats_df$All_Variance), "Feature"]))
+print(paste0("Feature with highest benign variance: ", stats_df[stats_df$Benign_Variance == max(stats_df$Benign_Variance), "Feature"]))
+print(paste0("Feature with highest malignant variance: ", stats_df[stats_df$Malignant_Variance == max(stats_df$Malignant_Variance), "Feature"]))
+print(paste0("Feature with greatest overlap between outcome groups: ", stats_df[stats_df$Overlap_Range == max(stats_df$Overlap_Range), "Feature"]))
+
+print(paste0("Feature with lowest overall variance: ", stats_df[stats_df$All_Variance == min(stats_df$All_Variance), "Feature"]))
+print(paste0("Feature with lowest benign variance: ", stats_df[stats_df$Benign_Variance == min(stats_df$Benign_Variance), "Feature"]))
+print(paste0("Feature with lowest malignant variance: ", stats_df[stats_df$Malignant_Variance == min(stats_df$Malignant_Variance), "Feature"]))
+print(paste0("Feature with least overlap between outcome groups: ", stats_df[stats_df$Overlap_Range == min(stats_df$Overlap_Range), "Feature"]))
+```
+
+The below block of code executes 1000 iterations of random sampling (3 different sample sizes) and performing the Mann-Whitney U test between outcomes groups for both the area1 feature, which has the highest variance and overlap between groups, and the fractal_dimension1 feature, which has the lowest variance and overlap between groups. The p-values have been stored and plotted on a histogram for each feature and sample size. The plots show that the area1 variable, which has a high variance and overlap between outcome groups, consistently shows a very low p-value less than 0.01. As the sample size increases, the distribution tends to shift toward having more p-values closer to 0. In contrast, the fractal_dimension1 variable, which has a low variance and overlap between groups, shows a wide range of p-values. As sample size increases, the distribution tends to shift slightly closer to a uniform distribution.
+
+```{r q4 sampling, warning=FALSE}
+## High variance data feature
+# Store p-values from re-sampling and re-testing
+Pvals_high_variance_10 <- c()
+Pvals_high_variance_15 <- c()
+Pvals_high_variance_20 <- c()
+
+# Repeat re-sampling and re-testing 1000 times
+for (i in c(1:1000)){
+  # Take random sampling of different sample sizes from each outcome group
+  benign_sample_10 <- sample(benign_data$area1, 10)
+  malignant_sample_10 <- sample(malignant_data$area1, 10)
+  benign_sample_15 <- sample(benign_data$area1, 15)
+  malignant_sample_15 <- sample(malignant_data$area1, 15)
+  benign_sample_20 <- sample(benign_data$area1, 20)
+  malignant_sample_20 <- sample(malignant_data$area1, 20)
+
+  # Perform Mann-Whitney U test and add p-value to stored values
+  p_value_10 <- wilcox.test(benign_sample_10, malignant_sample_10)$p.value
+  Pvals_high_variance_10 <- c(Pvals_high_variance_10, p_value_10)
+  p_value_15 <- wilcox.test(benign_sample_15, malignant_sample_15)$p.value
+  Pvals_high_variance_15 <- c(Pvals_high_variance_15, p_value_15)
+  p_value_20 <- wilcox.test(benign_sample_20, malignant_sample_20)$p.value
+  Pvals_high_variance_20 <- c(Pvals_high_variance_20, p_value_20)
+}
+
+# Plot distribution of p-values
+hist(Pvals_high_variance_10)
+hist(Pvals_high_variance_15)
+hist(Pvals_high_variance_20)
+
+## Low variance data feature
+# Store p-values from re-sampling and re-testing
+Pvals_low_variance_10 <- c()
+Pvals_low_variance_15 <- c()
+Pvals_low_variance_20 <- c()
+
+# Repeat re-sampling and re-testing 1000 times
+for (i in c(1:1000)){
+  # Take random sampling of different sample sizes from each outcome group
+  benign_sample_10 <- sample(benign_data$fractal_dimension1, 10)
+  malignant_sample_10 <- sample(malignant_data$fractal_dimension1, 10)
+  benign_sample_15 <- sample(benign_data$fractal_dimension1, 15)
+  malignant_sample_15 <- sample(malignant_data$fractal_dimension1, 15)
+  benign_sample_20 <- sample(benign_data$fractal_dimension1, 20)
+  malignant_sample_20 <- sample(malignant_data$fractal_dimension1, 20)
+
+  # Perform Mann-Whitney U test and add p-value to stored values
+  p_value_10 <- wilcox.test(benign_sample_10, malignant_sample_10)$p.value
+  Pvals_low_variance_10 <- c(Pvals_low_variance_10, p_value_10)
+  p_value_15 <- wilcox.test(benign_sample_15, malignant_sample_15)$p.value
+  Pvals_low_variance_15 <- c(Pvals_low_variance_15, p_value_15)
+  p_value_20 <- wilcox.test(benign_sample_20, malignant_sample_20)$p.value
+  Pvals_low_variance_20 <- c(Pvals_low_variance_20, p_value_20)
+}
+
+# Plot distribution of p-values
+hist(Pvals_low_variance_10)
+hist(Pvals_low_variance_15)
+hist(Pvals_low_variance_20)
+```

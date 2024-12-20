@@ -1,0 +1,517 @@
+---
+title: "RBIF111 Homework 1"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+Objective: Create a function that calculates the mean of a numeric vector starting from the first element to the last. Then compare this to the results of the mean() R function.
+
+Function definition:
+
+```{r mean function, warning = FALSE}
+calculate_mean <- function(vector, na.rm=F){
+  # Remove NA values if needed
+  if (na.rm){
+    vector <- vector[!is.na(vector)]
+  }
+  # Calculate sum of all observations
+  total <- 0
+  for(x in vector){
+      total <- total + x
+  }
+  
+  # Divide total by number of observations
+  mean <- total / length(vector)
+  return(mean)
+}
+```
+
+Comparing function results with mean() R function:
+
+```{r comparing mean functions, warning = FALSE}
+test_vector <- c(1,2,3,4,5,6,7,11,100)
+# R function
+mean(test_vector)
+# Custom function
+calculate_mean(test_vector)
+
+# Add NA value
+test_vector_na <- c(test_vector, NA)
+mean(test_vector_na)
+calculate_mean(test_vector_na)
+
+# Add NA value and use na.rm=T
+mean(test_vector_na, na.rm=T)
+calculate_mean(test_vector_na, na.rm=T)
+```
+
+## Question 2
+
+Objective A: Execute and explain the results of the following block of R code:
+
+```{r, warning = FALSE}
+mat <- matrix(1:9, nrow = 3, ncol = 3)
+```
+The above line of code uses the matrix() function to generate a matrix with numerical data values 1-9. The matrix has 3 rows and 3 columns, and the data values fill in the first column, then the second, then the third. There is no need for recycling because the number of data values equals the dimensions of the matrix. Because the result of the matrix() function is being stored in a variable, nothing is printed.
+
+```{r, warning = FALSE}
+which.max(mat)
+```
+The above line of code uses the which.max() function to determine the index of the first instance of the maximum of the matrix, which is index 9. The index is determined by column, meaning looking through all the values in column 1 top to bottom, then column 2, then column 3. The result is not being stored in a variable and thus is printed.
+
+```
+which.max(as.data.frame(mat))
+```
+The above line of code attempts to use the which.max() function on the matrix that has been coerced to a data frame. An error message is printed because the which.max() function takes a single vector as an input. In R, a matrix is stored internally as single vector, but a data frame is stored in a way that rather each column is a vector.
+
+```
+mat[1:9,]
+```
+The above line of code attempts to subset a matrix, but an error message is printed because the first argument is specifying rows 1-9. This matrix only has rows 1-3, as it is a 3 x 3 dimension matrix.
+
+```
+mat[,1:9]
+```
+The above line of code attempts to subset a matrix, but an error message is printed because the second argument is specifying columns 1-9. This matrix only has columns 1-3, as it is a 3 x 3 dimension matrix.
+
+
+Objective B: Execute and explain the results of the following block of R code:
+
+```{r, warning = FALSE}
+m <- matrix(c(1:5,NA,7,7,NA), nrow=3,ncol=3,byrow=T); print(m)
+```
+The above line of code uses the matrix() function to generate a matrix with the following values: 1, 2, 3, 4, 5, NA, 7, 7, and NA. The matrix has 3 rows and 3 columns, and because byrow=T is specified the data values fill in the first row, then the second, then the third. There is no need for recycling because the number of data values equals the dimensions of the matrix. Nothing is printed when the result of a function is being stored in a variable, but the print() function is then called which prints the matrix.
+
+```{r, warning = FALSE}
+numbers <- NULL
+```
+The above line of code assigns the value NULL to the variable called numbers. Nothing is printed because the value is being stored in a variable. When used with the below chunk of code, this line of code serves the purpose of initializing the numbers variable with an empty value. The variable is now available to have its value changed in the for loop.
+
+```
+for(i in 1:4){
+  temp <- m[i,]
+  numbers <- c(numbers, temp)
+}
+```
+The above block of code attempts to loop through the numbers in the range 1-4 and apply the following logic at each iteration:
+- Subset a single row from matrix m with the row number matching the current iteration of the loop
+- Add all of the values in the subsetted matrix to the current values of the numbers variable
+However, an error message is printed on the final iteration of the loop because matrix m is a 3 x 3 matrix and does not have a row 4. Because the loop was able to successfully complete iterations 1-3, the current value of the numbers variable is c(1, 2, 3, 4, 5, NA, 7, 7, NA).
+
+## Question 3
+
+Objective: Select a dataset from GEO, download it using the GEO2R code, and analyze it.
+
+Chosen dataset: Comparison of Gene Expression in Uterine Smooth Muscle Tumors
+
+Experiment type: Expression profiling by array
+
+GSEXXX number: GSE764
+
+gplXXX number: GPL80
+
+Control group: myometrium samples
+
+Treatment group: uterine leiomyosarcoma samples
+
+Code to get plate annotation info:
+
+``` {r annot, message = FALSE}
+library(GEOquery)
+library(data.table)
+library(org.Hs.eg.db)
+
+# Get probe ID info and corresponding genes
+gpl <- "GPL80"
+z <- getGEO(gpl)
+PlateAnnotInfo <- as.data.table(z@dataTable@table)
+# Select only needed columns
+PlateAnnotInfo <- PlateAnnotInfo[,c("ID", "Gene Symbol", "ENTREZ_GENE_ID"), with = FALSE]
+# Remove slashes from gene id and symbol as needed
+PlateAnnotInfo$`Gene Symbol` <- gsub(" ///.+", "", PlateAnnotInfo$`Gene Symbol`)
+PlateAnnotInfo$ENTREZ_GENE_ID <- gsub(" ///.+", "", PlateAnnotInfo$ENTREZ_GENE_ID)
+# Filter out blank results for gene symbol
+PlateAnnotInfo <- PlateAnnotInfo[!PlateAnnotInfo$`Gene Symbol` == "",]
+# Rename columns
+setnames(PlateAnnotInfo, c("Gene Symbol", "ENTREZ_GENE_ID"), c("SYMBOL", "ENTREZID"))
+# Filter out blank results for gene id
+PlateAnnotInfo <- PlateAnnotInfo[!is.na(ENTREZID),]
+PlateAnnotInfo <- PlateAnnotInfo[!ENTREZID == "",]
+# Convert to character type
+PlateAnnotInfo$ENTREZID <- as.character(PlateAnnotInfo$ENTREZID)
+# Get mappings between gene ids and names
+mappings <- AnnotationDbi::select(org.Hs.eg.db, keys=PlateAnnotInfo$ENTREZID, columns=c("GENENAME"),keytype="ENTREZID")
+# Merge gene name information
+PlateAnnotInfo <- unique(merge(PlateAnnotInfo, mappings, by = "ENTREZID", allow.cartesian = TRUE))
+PlateAnnotInfo <- PlateAnnotInfo[,c("ID", "ENTREZID", "SYMBOL", "GENENAME")]
+# Add column with gplXXXX number
+PlateAnnotInfo$GPLID <- gpl
+```
+
+Code to download data and save to working directory:
+
+```{r download, message = FALSE, warning = FALSE}
+library(DESeq2)
+library(limma)
+
+# Define download function
+GEODataDownload <- function(DS, gpl, gsm, PlateAnnotInfo, GenerateMetaData, Technology){
+  library(DESeq2)
+  library(limma)
+  if(Technology == "Array"){
+    # Load series and platform data from GEO
+    gset <- getGEO(DS)
+    if(length(gset) > 1) idx <- grep(gpl, attr(gset, "names")) else idx <- 1
+    gset <- gset[[idx]] # ExpressionSet object
+    
+    # Make proper column names to match toptable
+    fvarLabels(gset) <- make.names(fvarLabels(gset))
+    
+    # Group membership for all samples
+    comp <- gsub(" ", "", gsm)
+    comp <- gsub(",", "", comp)
+    gsms <- paste0(comp)
+    sml <- strsplit(gsms, split="")[[1]]
+    # Filter out excluded samples
+    sel <- which(sml != "X")
+    sml <- sml[sel]
+    gset <- gset[ ,sel]
+    
+    # log2 transformation
+    ex <- exprs(gset) # Matrix with row for each probe ID and column for each sample
+    # Produce sample quantiles as a numerical vector
+    qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+    # Assign Boolean value to LogC, T if one of the expressions is true
+    LogC <- (qx[5] > 100) || # 99th percentile greater than 100
+      (qx[6]-qx[1] > 50 && qx[2] > 0) || # Range greater than 50 and 25th percentile greater than 0
+      (qx[2] > 0 && qx[2] < 1 && qx[4] < 2) # 25th percentile greater than 0 and less than 1, and 75th percentile less than 2
+    # Treat values 0 and lower as NaN, 
+    if(LogC){ ex[which(ex <= 0)] <- NaN
+      # Get log in base 2 of matrix, and place values in gset
+      exprs(gset) <- log2(ex) }
+    
+    sml <- paste("G", sml, sep="")
+    f1 <- as.factor(sml)
+    gset$description2 <- f1
+    # Create matrix to assign samples to treatment groups. Each sample is a row and treatment groups are columns. Values within matrix are 1 for T and 0 for F
+    design <- model.matrix(~description2 + 0, gset)
+    colnames(design) <- levels(f1)
+    
+    # Fit linear model
+    fit <- lmFit(gset, design) # MArrayLM object
+    
+    # Set up contrasts of interest and recalculate model coefficients
+    cont.matrix <- makeContrasts(G1-G0, levels = design)
+    fit2 <- contrasts.fit(fit, cont.matrix) # MArrayLM object
+    
+    # Compute statistics and table of top significant genes
+    fit2 <- eBayes(fit2, 0.01) # MArrayLM object
+    tT <- topTable(fit2, adjust="fdr", sort.by = "B", number = 25000000000)
+    
+    #### subset ####
+    ex2 <- data.table(subset(tT, select=c("ID", "logFC", "AveExpr", "P.Value", "adj.P.Val")))
+    ex2$ID <- as.character(ex2$ID)
+    
+    #### annotate with gene names ####
+    plat <- PlateAnnotInfo[GPLID == gpl,][,!"GPLID", with = FALSE]
+    if(nrow(plat) == 0){ print(paste("There is no annotation information available for", gpl)) }
+    plat$ID <- as.character(plat$ID)
+    plat <- plat[!duplicated(plat$ID),]
+    ex2 <- merge(plat, ex2, by = "ID")
+    ex2$ID <- as.character(ex2$ID)
+    exraw <- data.table(ex)
+    exraw$ID <- as.character(rownames(ex))
+    #### annotate raw data with gene names ####
+    ex2 <- merge(ex2, exraw, by = "ID")
+    #### Generate Meta Data ####
+    Pdat <- pData(gset)
+    #### Add Meta data ####
+    Pdat <- as.data.table(Pdat)
+    return(list(Data = ex2, MetaData = Pdat))
+  }
+  
+  if(Technology == "RNAseq"){
+    ACC <- paste("acc=", DS, sep = "")
+    file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+    comp <- gsub(" ", "", gsm)
+    comp <- gsub(",", "", comp)
+    gsms <- paste0(comp)
+    #### Set up DEG names ####
+    urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+    path <- paste(urld, ACC, file, sep="&");
+    tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+    exraw <- tbl 
+    apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+    annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+    rownames(annot) <- annot$GeneID
+    sml <- strsplit(gsms, split="")[[1]]
+    sel <- which(sml != "X")
+    sml <- sml[sel]
+    tbl <- tbl[ ,sel]
+    gs <- factor(sml)
+    groups <- make.names(c("Ctrl", "Tx"))
+    levels(gs) <- groups
+    sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+    keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+    tbl <- tbl[keep, ]
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~Group)
+    ds <- DESeq(ds, test="Wald", sfType="poscount")
+    r <- results(ds, contrast=c("Group", groups[2], groups[1]), alpha=0.05, pAdjustMethod ="fdr")
+    tT <- r[order(r$padj)[1:length(r$padj)],]
+    tT <- merge(as.data.frame(tT), annot, by=0, sort=F)
+    tT <- subset(tT, select=c("GeneID","padj","pvalue","lfcSE","stat","log2FoldChange","baseMean","Symbol","Description"))
+    #### subset ####
+    ex2 <- data.table(subset(tT, select=c("GeneID", "Symbol", "Description", "log2FoldChange", "pvalue", "padj")))
+    #### Adjust column names ####
+    setnames(ex2, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+    #### Get Raw data ####
+    GeneID <- as.integer(rownames(exraw))
+    exraw <- as.data.table(exraw)
+    #### Update column names ####
+    exraw$ENTREZID <- GeneID
+    #### merge FC and raw data together ####
+    mer <- merge(ex2, exraw, by = "ENTREZID")
+    return(mer)
+  }
+}
+
+# Execute download function
+ArrayData <- GEODataDownload(DS = "GSE764", gpl = "GPL80", gsm = "00001XXXXXXX11111111XXXXXX", PlateAnnotInfo = PlateAnnotInfo, Technology = "Array")
+# Preview data
+head(as.data.frame(ArrayData[["Data"]]),10)
+# Save to working directory
+setwd("/Users/ritapecuch/Downloads")
+path_to_write <- paste0(getwd(), "/ArrayData.txt")
+write.table(as.data.frame(ArrayData[["Data"]]), file=path_to_write, sep="\t")
+```
+
+Code to reload data file and add annotation:
+
+```{r manipulate, warning = FALSE}
+# Read data
+array_data <- read.table(path_to_write, sep="\t")
+# Get preview of data
+head(as.data.frame(array_data),10)
+# Add annotation
+array_data$Subset_Comparison <- "Leiomysarcoma-Myometrium"
+```
+
+Code to create charts that visualize average gene expression level for each sample:
+
+```{r avg per sample, warning = FALSE}
+library(stringr)
+
+# Control samples
+control_samples <- c("GSM11625", "GSM11757", "GSM11758", "GSM11759")
+
+# Get all sample names
+sample_cols <- names(array_data)[grep("^GSM", names(array_data))]
+
+# Get avg for each sample and keep track of if control or treatment samples
+avgs <- c()
+groups <- c()
+for(col in sample_cols){
+  # Calculate avg
+  avg <- mean(array_data[[col]], na.rm=T)
+  avgs <- c(avgs, avg)
+  # Place in correct group
+  group <- ifelse(col %in% control_samples, "Control", "Leiomyosarcoma")
+  groups <- c(groups, group)
+}
+names(avgs) <- sample_cols
+names(groups) <- sample_cols
+```
+
+The below plot is a histogram of the average gene expression by sample. Due to the visualized peak, the plot shows that the most common average gene expression in a sample is 480-500. As average gene expression increases or decreases from this range, the number of samples decreases.
+
+```{r histogram by sample, warning = FALSE}
+hist(avgs, main="Average Gene Expression by Sample", xlab="Average Gene Expression Level", ylab="# of Samples")
+```
+
+The below plot is a boxplot of the average gene expression by sample stratified by treatment group. In this case, the control group contains myometrium samples, and the treatment group contains uterine leiomyosarcoma samples. The plot visualizes a slightly higher average gene expression level in leiomyosarcoma samples, as well as a wider range of gene expression levels.
+
+```{r boxplot by sample, warning = FALSE}
+boxplot(avgs~groups, ylab="Average Gene Expression Level", xlab="Groups")
+```
+
+The below plot is a stripchart of the average gene expression level by sample. Based on the placement of the markers, the plot visualizes that the average gene expression ranged from about 450-530, and the greatest quantity of samples fell in the 480-500 range.
+
+```{r stripchart by sample, warning = FALSE}
+stripchart(avgs, method="jitter", xlab="Average Gene Expression Level")
+```
+
+The below plot is a dotchart of the average gene expression level by sample. The samples are on the y-axis, and the average gene expression level is on the x-axis. Based on the horizontal placement of the dots, the plot visualizes that the average gene expression ranged from about 450-530, and the greatest quantity of samples fell in the 480-500 range.
+
+```{r dotchart by sample, warning = FALSE}
+dotchart(avgs, main="Average Gene Expression by Sample")
+```
+
+The below plot is a dotchart of the average gene expression level by sample, with the data first sorted in ascending order by average gene expression level. Based on the steep slope seen between about 480-500, the plot visualizes that the greatest quantity of samples fell in the 480-500 range.
+
+```{r dotchart by sample ascending, warning = FALSE}
+dotchart(sort(avgs), main="Average Gene Expression by Sample")
+```
+
+Code to create charts that visualize average expression level for each gene:
+
+```{r plot gene, warning = FALSE}
+# Get avg. for each gene
+array_data$AVG_EXPRESSION <- rowMeans(array_data[c(sample_cols)], na.rm=T)
+```
+
+The below plot is a histogram of the average gene expression by gene. The plot visualizes that depending on the gene, the average expression level in a sample can reach nearly 30000. Due to the visualized peak, the plot shows that the most common average gene expression in a sample is well below 5000, but this chart would need to be displayed on a larger screen and with more frequent x-labels or use log scale to gauge more specific numbers.
+
+```{r hist by gene, warning = FALSE}
+hist(array_data$AVG_EXPRESSION, main="Average Expression by Gene", xlab="Average Gene Expression Level", ylab="# of Genes", breaks=200)
+```
+
+The below plot is a boxplot of the average gene expression by gene. The plot visualizes that while the most common average expression level for a gene is far below 5000, average expression level can reach up to nearly 30000.
+
+```{r boxplot by gene, warning = FALSE}
+boxplot(array_data$AVG_EXPRESSION, main="Average Expression Level by Gene")
+```
+
+The below plot is a dotchart of the average gene expression level by gene, with the data first sorted in ascending order by average expression level. Based on the steep slope seen well under 5000, the plot visualizes that the greatest quantity of genes have an average expression level of well under 5000. However, some genes are still visualized as having a much higher average expression level up to nearly 30000.
+
+```{r dotchart by gene ascending, warning = FALSE}
+dotchart(sort(array_data$AVG_EXPRESSION), main="Average Expression by Gene")
+```
+
+Calculations to find genes with the highest and the lowest and highest expression levels across all samples:
+
+```{r high and low, warning = FALSE}
+# Gene with highest expression level across all samples - 1
+max_expression <- max(array_data$AVG_EXPRESSION, na.rm=T)
+array_data_high <- array_data[!is.na(array_data$AVG_EXPRESSION) ,]
+array_data_high <- array_data_high[array_data_high$AVG_EXPRESSION == max_expression ,]
+max_exp_levels <- as.vector(as.numeric(array_data_high[sample_cols]))
+
+# Genes with lowest expression level across all samples - multiple, will choose first result for this example
+min_expression <- min(array_data$AVG_EXPRESSION, na.rm=T)
+array_data_low <- array_data[!is.na(array_data$AVG_EXPRESSION) ,]
+array_data_low <- array_data_low[array_data_low$AVG_EXPRESSION == min_expression,]
+array_data_low <- array_data_low[1,]
+min_exp_levels <- as.vector(as.numeric(array_data_low[sample_cols]))
+```
+
+The following plots show the distribution across samples of the gene expression level of the ribosomal protein L37a gene. The plots visualize that the the expression level stays under 40,000 for most of the samples and is mostly concentrated around 20,000. However, outliers are present with gene expression levels reaching up to 100,000.
+
+```{r max expression, warning = FALSE}
+title <- "Expression of ribosomal protein L37a gene"
+
+hist(max_exp_levels, main=title, xlab="Gene Expression Level", ylab="# of Samples")
+
+boxplot(max_exp_levels, main=title)
+
+stripchart(max_exp_levels, method="jitter", xlab="Gene Expression Level", main=title)
+
+dotchart(max_exp_levels, main=title)
+
+dotchart(sort(max_exp_levels), main=title)
+```
+
+The following plots show the distribution across samples of the gene expression level of the 8-oxoguanine DNA glycoslyase gene. The plots visualize that the the expression level is 20 in all samples.
+
+```{r min expression, warning = FALSE}
+title <- "Expression of 8-oxoguanine DNA glycoslyase gene"
+
+hist(min_exp_levels, main=title, xlab="Gene Expression Level", ylab="# of Samples")
+
+boxplot(min_exp_levels, main=title)
+
+stripchart(min_exp_levels, method="jitter", xlab="Gene Expression Level", main=title)
+
+dotchart(min_exp_levels, main=title)
+
+dotchart(sort(min_exp_levels), main=title)
+```
+
+The below code produces a volcano plot of the differential expression analysis. A volcano plot is a scatterplot that plots the statistical significance versus the fold change. The most statistically significant genes are closest to the top of the chart because they have the lowest adjusted p values, meaning the lowest probability that differences observed between control and treatment groups are due to chance. The fold change is the ratio between the gene expression of the two groups. As the fold change increases or decreases from zero, this indicates there is a greater proportional difference in gene expression between the two groups.
+
+```{r volcano, warning = FALSE}
+library(ggplot2)
+
+# Volcano plot is dot plot with log2(fold change) on x-axis and -log10(adj p value) on y-axis
+array_data$threshold <- as.factor(array_data$adj.P.Val < 0.05)
+volcano_plot <- array_data %>%
+  ggplot(aes(x=logFC, y=-log10(adj.P.Val), colour=threshold)) +
+   geom_point() +
+    guides(color = guide_legend(title = "Padj<0.05"))
+
+volcano_plot
+```
+
+The below code produces a MA plot of the differential expression analysis. A MA plot is a scatterplot that plots the fold change versus the average expression of genes in the log scale. As the fold change increases or decreases from zero, this indicates there is a greater proportional difference in gene expression between the two groups.
+
+```{r ma, warning=FALSE}
+
+# MA plot is dot plot with avg. expression signal on x-axis and log2(fold change) on y-axis
+ma_plot <- array_data %>%
+  ggplot(aes(x=AveExpr, y=logFC, colour=threshold)) + 
+    geom_point(alpha=0.4, size=1.8) + 
+    geom_hline(aes(yintercept = 0), colour = "blue", size = 1.2) +
+    ylim(c(min(array_data$logFC), max(array_data$logFC))) +
+    guides(color = guide_legend(title = "Padj<0.05"))
+
+ma_plot
+```
+
+## Question 4
+
+Objective: For all of the columns in the UCI machine learning data set, calculate the number of missing values, the mean, median, standard deviation. For categorical variables, calculate the counts for each feature. Visualize these results as boxplots. Describe any findings and why the calculated values may be different between each column.
+
+Dataset: Heart Disease, Cleveland database
+
+Code to read dataset into R:
+
+```{r ml data read, warning = FALSE}
+setwd("/Users/ritapecuch/Downloads/heart+disease")
+# Read dataset
+ml_data_path <- paste0(getwd(), "/processed.cleveland.data")
+ml_col_names <- c("age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach", "exang", "oldpeak", "slope", "ca", "thal", "num")
+ml_data <- read.table(ml_data_path, sep=",", col.names = ml_col_names)
+```
+
+The tables and figures that are presented below have been created from the Heart Disease dataset from the Cleveland database. The boxplot of the age variable shows that age group that makes up the biggest proportion of representation in the data is about 47-60, but with a wide spread between about 30-80. The histogram of the sex variable shows that the sex corresponding to the "1" category was twice as prevelant in the dataset than the sex corresponding to the "0" category. The histogram of the cp variable shows an increasing trend in frequency as the category (1-4) increases. The boxplot of the trestbps variable shows that 50% of the observations were about 120-140 and several outliers were observed above about 170. The boxplot of the chol variable shows that 50% ot the observations were between 200-300 and a few outliers were observed in approximately the 400-500 range. The histogram of the fbs variable shows a significantly higher frequency of the "0" category than the "1" category. The histogram of the restecg variable shows about equal frequencies of the "0" and "2" categories, and a significantly lower frequency of the "1" category. The boxplot of the thalach variable shows that 50% of the observations were in the range of about 130-160, and only a single outlier was observed of about 70. The histogram of the exang variable shows a signficantly higher frequency of the "0" category than the "1" category. The boxplot of the oldpeak variable shows that a little over 75% of the observations were less than 2, with outliers reaching up to 6-7. The histogram of the slope variable shows about equal frequencies of the "1" and "2" categories, and a significantly lower frequency of the "3" category. The boxplot of the ca variable shows that 75% of the observations were 1 and below, and only a single outlier was observed at about 3. The histogram of the thal variable shows significant differences between the frequencies of all 3 categories. The boxplot of the num variable shows that 75% of the observations were 0-2, and the remaining 25% were 2-4 with no outliers.
+
+Code for generating the above-described calculations and plots of the Heart Disease data set:
+
+```{r ml data analyze, warning = FALSE}
+categorical_vars <- c("sex", "cp", "fbs", "restecg", "exang", "slope", "thal")
+
+# Get stats for each column
+for (col in names(ml_data)){
+  # Handle ? values in ca column
+  ml_data[[col]] <- as.numeric(ml_data[[col]])
+
+  # Calculate stats
+  num_missing <- sum(is.na(ml_data[[col]]))
+  mean <- mean(ml_data[[col]], na.rm=T)
+  median <- median(ml_data[[col]], na.rm=T)
+  sd <- sd(ml_data[[col]], na.rm=T)
+  
+  stats_df <- data.frame(c(num_missing, mean, median, sd), row.names = c("Missing Values", "Mean", "Median", "Standard Deviation"))
+  names(stats_df) <- c(paste0("Result for Column ", col))
+  print(stats_df)
+
+  # Category counts and histogram if applicable, otherwise use boxplot
+  if (col %in% categorical_vars){
+    category_counts <- table(ml_data[[col]])
+    cat_count_df <- data.frame(category_counts)
+    names(cat_count_df) <- c(paste0(col, " Category"), "Frequency")
+    print(cat_count_df)
+    # Generate bar chart
+    hist(ml_data[[col]], main=paste0("Counts of Values for ", col))
+  } else{
+    # Generate box plot
+    boxplot(ml_data[[col]], main=paste0("Spread of Values for ", col))
+  }
+}
+```

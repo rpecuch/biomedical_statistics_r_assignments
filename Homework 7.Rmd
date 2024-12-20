@@ -1,0 +1,302 @@
+---
+title: "RBIF111 Homework 7"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+Objective: Discuss cross validation and describe how to partition data for cross validation and the potential issues that may occur.
+
+Cross validation refers to the process of evaluating model performance by fitting a model using a training set of data then testing the model using a different set of testing data. This is done to ensure that a model is not overfit to a training set of data that may have noise and outliers, impacting its ability to make accurate predictions on new data. To partition the data into training and test sets, the data is randomly split into a certain number of groups. During each round of fitting and testing a model, one group is set aside as the test set. The remaining groups are used to train the model, and the model is tested on the test set. To test the model, the squared residuals are calculated between the predictions made by the model and the actual test set data. 
+
+One potential issue that may occur is an uneven distribution of some categorical independent variable between the different training-test splits. It is important to understand the data at hand and take into account any stratification that will be needed to produce the most accurate model. Another potential issue is the great computational expenses that may accompany using cross validation on very large datasets.
+
+## Question 2
+
+Objective: Download a data set from GEO and find the feature that has the greatest predictive value for an outcome. 
+
+Chosen dataset: Skeletal muscle - 25 pre-sarcopenia patients, 15 sarcopenia patients (total of 30 patient samples)
+
+Experiment type: Expression profiling by high throughput sequencing
+
+GSEXXX number: GSE226151
+
+gplXXX number: GPL16791
+
+Code to download expression data:
+
+```{r download, warning = FALSE, message=FALSE}
+# Define download function for RNAseq dataset
+GEODataDownload <- function(DS, gpl, gsm){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  #### Set up DEG names ####
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&");
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # filter out excluded samples (marked as "X")
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  tbl <- tbl[ ,sel]
+  
+  tT <- merge(as.data.frame(tbl), annot, by=0, sort=F)
+  #### Adjust column names ####
+  setnames(tT, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+
+  return(tT)
+}
+
+# Execute download function
+RNA_Seq_Data <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "XXXXXXXXXXXXXXXXXXXX000000000000000XXXX000000000000000XXXX")
+```
+
+Code to load sample metadata:
+
+```{r manipulate, warning = FALSE, message=FALSE}
+library(dplyr)
+
+# Read sample metadata
+metadata_path <- "/Users/ritapecuch/Downloads/SraRunTable.csv"
+metadata <- read.table(metadata_path, sep=",", header=TRUE) %>%
+  select(Sample.Name, AGE, BMI)
+```
+
+The below code block isolates only the samples included in the GEO-downloaded expression data in the metadata table and isolate only the needed columns in the gene expression data, which are the gene symbol and the expression level in each sample. Then, a design matrix is generated for the age variable. Next, the design matrix and the gene expression data are input into the lmFit() function to fit a linear model for the association between each gene expression level with age. Finally, the eBayes() function is applied and the gene that produced the lowest p-value, and therefore most significant association with age, is printed.
+
+```{r q2, warning = FALSE, message=FALSE}
+# Select only samples whose expression data has been downloaded
+metadata_trimmed <- metadata[metadata$Sample.Name %in% names(RNA_Seq_Data),]
+# Order expression data cols in same order as design matrix rows
+RNA_Seq_Data_trimmed <- RNA_Seq_Data[, c("SYMBOL", metadata_trimmed$Sample.Name)]
+
+# Generate design matrix
+design.matrix <- cbind(rep(1,length(metadata_trimmed$AGE)),metadata_trimmed$AGE)
+
+# Fit linear model for each gene expression level's effect on age
+lmFits <- lmFit(RNA_Seq_Data_trimmed, design.matrix)
+# Select best fit gene
+top_gene <- topTable(eBayes(lmFits))[1, "SYMBOL"]
+print(paste0("Gene with greatest predictive value for age: ", top_gene))
+```
+
+## Question 3
+
+Objective: Use cross-validation and bootstrap in order to identify the gene with the most significant association with the continuous annotation variable.
+
+The below code block executes the same simulation with both 50 and 250 rounds and compares results. For each simulation, a vector of best fit genes and a vector of mean squared errors (MSE) from each round are collected. For each round of the simulation, the gene expression data is randomly split into 5 equally-sized groups. One of the groups is set aside as the test set, and the remaining 4 groups are used as the training set for fitting a linear model between gene expression and age. Because the lmFits() function is needed to fit a model for all genes at once, a design matrix is first composed for the age variable with only the ages included in the training dataset. The eBayes() function is applied and the gene that produced the lowest p-value is added to the vector of best fit genes. Then, for the best fit gene, the predict() function is used to predict the ages of patients with gene expression levels given by the test set using the generated linear model. The squared differences are calculated between these predicted age values and the actual age values. At the end of each round of the simulation, the mean squared error of all of the training-test splits is calculated and stored in the vector of mean squared errors.
+
+Display of the top 5 most frequent best fit genes for each simulation shows the same top 2 most frequent best fit genes and some variation in the next 3 most frequent top fit genes. However, the proportions of each of the rankings (1 through 5) are very similar between both simulations. The boxplot of MSE results from both simulations shows a slightly wider spread of values in the 250-round simulation.
+
+Outliers can effect the results of cross validation by providing uncharacteristic data for the model to fit to and potentially impact its performance when being used on new data. The idea of splitting the data into multiple training-test sets is designed to average out the outlier impact, but there will still be an impact on a model's performance. For example, outliers can impact the model coefficients, unexplained variance, or even the differences between expected and predicted values.
+
+```{r q3 cross validation, warning = FALSE, message=FALSE}
+cross_validation_sim <- function(num_rounds){
+  # Keep track of best fit genes and mean squared errors
+  all.best.genes <- c()
+  all.mse <- numeric()
+  for (i in c(1:num_rounds)){
+    n_groups <- 5 
+    # Split data into 5 groups
+    sample_col_groups <- numeric()
+    for (num in c(1:n_groups)){
+      choices_left <- setdiff(c(2:31), sample_col_groups)
+      sample <- sample(choices_left, 6)
+      sample_col_groups <- c(sample_col_groups, sample)
+    }
+    # Keep track of squared residuals from each training-test split
+    se_current_round <- numeric()
+    # Run simulation on each group
+    for (group in c(1:n_groups)){
+      # Select columns for test set
+      index <- c(1:5) + (group-1)*6
+      sample_col_range <- sample_col_groups[index]
+      # Split into training and test set
+      test_set <- RNA_Seq_Data_trimmed[, c(1, sample_col_range)]
+      training_cols <- setdiff(c(1:31), sample_col_range)
+      training_set <- RNA_Seq_Data_trimmed[, training_cols]
+      # Generate design matrix to only include training set
+      design.matrix <- NULL
+      for (num in setdiff(c(2:31), sample_col_range)){
+        sample_name <- names(RNA_Seq_Data_trimmed)[num]
+        age <- metadata_trimmed[metadata_trimmed$Sample.Name == sample_name, "AGE"]
+        if (is.null(design.matrix)){
+          design.matrix <- matrix(data=c(1, age), nrow = 1, ncol = 2)
+        } else{
+          design.matrix <- rbind(design.matrix, c(1, age))
+        }
+      }
+      
+      # Fit linear model on training set
+      lmFits <- lmFit(training_set, design.matrix)
+      # Select best fit gene and add to vector
+      top_gene <- topTable(eBayes(lmFits))[1, "SYMBOL"]
+      all.best.genes <- c(all.best.genes, top_gene)
+      
+      # Refit linear model on training set using best fit gene
+      best_gene_df <- training_set[training_set$SYMBOL == top_gene, c(-1)]
+      data_to_fit <- data.frame(Gene_Exp <- unlist(best_gene_df[1, ]),
+                                Age <- design.matrix[,2]
+                                )
+      names(data_to_fit) <- c("Gene_Exp", "Age")
+      lmFit <- lm(Age ~ Gene_Exp, data_to_fit)
+      
+      # Predict on the test set
+      best_gene_test <- test_set[test_set$SYMBOL == top_gene, c(-1)]
+      metadata_test <- numeric()
+      for (test_sample in names(test_set)){
+        age <- metadata_trimmed[metadata_trimmed$Sample.Name == test_sample, "AGE"]
+        metadata_test <- c(metadata_test, age)
+      }
+      data_to_predict <- data.frame(Gene_Exp <- unlist(best_gene_test[1, ]),
+                                Age <- metadata_test
+                                )
+      names(data_to_predict) <- c("Gene_Exp", "Age")
+      predicted_values <- predict(lmFit, data_to_predict)
+      # Extract squared errors and add to vector
+      se <- (predicted_values- metadata_test)^2
+      se_current_round <- c(se_current_round, se)
+    }
+    # Calculate MSE of all training-test splits, and add to vector
+    mse <- mean(se_current_round)
+    all.mse <- c(all.mse, mse)
+  }
+  return(list(all.best.genes=all.best.genes, all.mse=all.mse))
+}
+
+# 50-round simulation
+results_sim50 <- cross_validation_sim(50)
+# Top 5 best fit genes
+best_fit_sim50 <- data.frame(Gene_50=unique(results_sim50$all.best.genes))
+best_fit_sim50$Count_50 <- sapply(best_fit_sim50$Gene_50, function(x) sum(results_sim50$all.best.genes == x))
+best_fit_sim50$Pct_50 <- (best_fit_sim50$Count_50 / 250) * 100
+best_fit_sim50_top5 <- best_fit_sim50[order(best_fit_sim50$Count_50, decreasing=T),][1:5, ]
+print(best_fit_sim50_top5)
+
+# 250-round simulation
+results_sim250 <- cross_validation_sim(250)
+# Top 5 best fit genes
+best_fit_sim250 <- data.frame(Gene_250=unique(results_sim250$all.best.genes))
+best_fit_sim250$Count_250 <- sapply(best_fit_sim250$Gene_250, function(x) sum(results_sim250$all.best.genes == x))
+best_fit_sim250$Pct_250 <- (best_fit_sim250$Count_250 / 1250) * 100
+best_fit_sim250_top5 <- best_fit_sim250[order(best_fit_sim250$Count_250, decreasing=T),][1:5, ]
+print(best_fit_sim250_top5)
+
+# Boxplot to compare MSE distribution
+mse_data_50 <- data.frame(MSE=results_sim50$all.mse, Rounds=50)
+mse_data_250 <- data.frame(MSE=results_sim250$all.mse, Rounds=250)
+mse_data <- rbind(mse_data_50, mse_data_250)
+
+boxplot(mse_data$MSE~mse_data$Rounds)
+```
+
+The below code block executes a bootstrap simulation with both 50 and 250 rounds and compares results. For each simulation, a vector of best fit genes and a vector of mean squared errors (MSE) from each round are collected. For each round of the simulation, sampling with replacement is used to generate a training set that includes all but a few of the patient samples and a test set with a few patient samples that were left out of the training set due to replacement. Because the lmFits() function is needed to fit a model for all genes at once, a design matrix is first composed for the age variable with only the ages included in the training dataset. The eBayes() function is applied and the gene that produced the lowest p-value is added to the vector of best fit genes. Then, for the best fit gene, the predict() function is used to predict the ages of patients with gene expression levels given by the test set using the generated linear model. The squared differences are calculated between these predicted age values and the actual age values. The mean squared error of each round of the simulation is calculated and stored in the vector of mean squared errors.
+
+Display of the top 5 most frequent best fit genes for each simulation shows the same top most frequent best fit genes and some variation in the next most frequent top fit genes. The boxplot of MSE results from both simulations shows a much wider spread of values in the 250-round simulation due to outliers.
+
+Compared to the cross-validation simulation, the spread of MSE results shown on the boxplot is wider, especially for the 250-round simulation. The top 5 most frequent best fit genes are mostly the same, although the proportion of times that the number 1 best fit gene is the best fit gene is much lower than seen in cross-validation.
+
+Outliers can effect the results of bootstrapping by providing uncharacteristic data for the model to fit to and potentially impact its performance when being used on new data. The idea of using sampling with replacement is designed to average out the outlier impact, but there will still be an impact on a model's performance. Because the replacements allow for the possibility that a single outlier could be included more than once in a training set, the outlier effect can be even greater than seen in cross validation. This is likely why significantly more large MSE results (outliers on the boxplot) are seen for the bootstrap simulation than the cross validation simulation, particularly for the 250-round simulation.
+
+```{r q3 bootstrap, warning = FALSE, message=FALSE}
+bootstrap_sim <- function(num_rounds){
+  # Keep track of best fit genes and mean squared errors
+  all.best.genes <- c()
+  all.mse <- numeric()
+  for (i in c(1:num_rounds)){
+    # Take sample from all possibilities with replacement
+    sample_col_range <- sample(c(2:31), 30, replace=T)
+    # Split into training and test set
+    training_set <- RNA_Seq_Data_trimmed[, c(1, sample_col_range)]
+    test_cols <- setdiff(c(1:31), sample_col_range)
+    test_set <- RNA_Seq_Data_trimmed[, test_cols]
+    
+    # Generate design matrix to only include training set
+    design.matrix <- NULL
+    for (num in sample_col_range){
+      sample_name <- names(RNA_Seq_Data_trimmed)[num]
+      age <- metadata_trimmed[metadata_trimmed$Sample.Name == sample_name, "AGE"]
+      if (is.null(design.matrix)){
+        design.matrix <- matrix(data=c(1, age), nrow = 1, ncol = 2)
+      } else{
+        design.matrix <- rbind(design.matrix, c(1, age))
+      }
+    }
+    
+    # Fit linear model on training set
+    lmFits <- lmFit(training_set, design.matrix)
+    # Select best fit gene and add to vector
+    top_gene <- topTable(eBayes(lmFits))[1, "SYMBOL"]
+    all.best.genes <- c(all.best.genes, top_gene)
+    
+    # Refit linear model on training set using best fit gene
+    best_gene_df <- training_set[training_set$SYMBOL == top_gene, c(-1)]
+    data_to_fit <- data.frame(Gene_Exp <- unlist(best_gene_df[1, ]),
+                              Age <- design.matrix[,2]
+                              )
+    names(data_to_fit) <- c("Gene_Exp", "Age")
+    lmFit <- lm(Age ~ Gene_Exp, data_to_fit)
+    
+    # Predict on the test set
+    best_gene_test <- test_set[test_set$SYMBOL == top_gene, c(-1)]
+    metadata_test <- numeric()
+    for (test_sample in names(test_set)){
+      age <- metadata_trimmed[metadata_trimmed$Sample.Name == test_sample, "AGE"]
+      metadata_test <- c(metadata_test, age)
+    }
+    data_to_predict <- data.frame(Gene_Exp <- unlist(best_gene_test[1, ]),
+                              Age <- metadata_test
+                              )
+    names(data_to_predict) <- c("Gene_Exp", "Age")
+    predicted_values <- predict(lmFit, data_to_predict)
+    # Extract squared errors and add to vector
+    se <- (predicted_values- metadata_test)^2
+    # Calculate MSE and add to vector
+    mse <- mean(se)
+    all.mse <- c(all.mse, mse)
+  }
+  return(list(all.best.genes=all.best.genes, all.mse=all.mse))
+}
+
+# 50-round simulation
+b_results_sim50 <- bootstrap_sim(50)
+# Top 5 best fit genes
+b_best_fit_sim50 <- data.frame(Gene_50=unique(b_results_sim50$all.best.genes))
+b_best_fit_sim50$Count_50 <- sapply(b_best_fit_sim50$Gene_50, function(x) sum(b_results_sim50$all.best.genes == x))
+b_best_fit_sim50$Pct_50 <- (b_best_fit_sim50$Count_50 / 50) * 100
+b_best_fit_sim50_top5 <- b_best_fit_sim50[order(b_best_fit_sim50$Count_50, decreasing=T),][1:5, ]
+print(b_best_fit_sim50_top5)
+
+# 250-round simulation
+b_results_sim250 <- bootstrap_sim(250)
+# Top 5 best fit genes
+b_best_fit_sim250 <- data.frame(Gene_250=unique(b_results_sim250$all.best.genes))
+b_best_fit_sim250$Count_250 <- sapply(b_best_fit_sim250$Gene_250, function(x) sum(b_results_sim250$all.best.genes == x))
+b_best_fit_sim250$Pct_250 <- (b_best_fit_sim250$Count_250 / 250) * 100
+b_best_fit_sim250_top5 <- b_best_fit_sim250[order(b_best_fit_sim250$Count_250, decreasing=T),][1:5, ]
+print(b_best_fit_sim250_top5)
+
+# Boxplot to compare MSE distribution
+b_mse_data_50 <- data.frame(MSE=b_results_sim50$all.mse, Rounds=50)
+b_mse_data_250 <- data.frame(MSE=b_results_sim250$all.mse, Rounds=250)
+b_mse_data <- rbind(b_mse_data_50, b_mse_data_250)
+
+boxplot(b_mse_data$MSE~mse_data$Rounds)
+```
+

@@ -1,0 +1,271 @@
+---
+title: "RBIF111 Homework 4"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+The dataset that will be used for this question is the Breast Cancer Wisconsin (Diagnostic) dataset. Due to the redundancy in features of this dataset, only the first instance of each feature will be analyzed in this question. For example, the features radius1, radius2, and radius3 exist for each record. In this assignment, only radius1 will be analyzed.
+
+The Diagnosis variable is a categorical variable with 2 possible values: M for "malignant" and B for "benign". The below code block reads the dataset into a dataframe and separates it into two different dataframes - one with only malignant records and one with only benign records.
+
+```{r prep data, warning = FALSE}
+setwd("/Users/ritapecuch/Downloads/breast+cancer+wisconsin+diagnostic")
+
+# Read dataset
+ml_data_path <- paste0(getwd(), "/wdbc.data")
+ml_col_names <- c("ID", "Diagnosis", "radius1", "texture1", "perimeter1", "area1", "smoothness1", "compactness1", "concavity1", "concave_points1", "symmetry1", "fractal_dimension1", "radius2", "texture2", "perimeter2", "area2", "smoothness2", "compactness2", "concavity2", "concave_points2", "symmetry2", "fractal_dimension2", "radius3", "texture3", "perimeter3", "area3", "smoothness3", "compactness3", "concavity3", "concave_points3", "symmetry3", "fractal_dimension3")
+ml_data <- read.table(ml_data_path, sep=",", col.names = ml_col_names)
+
+# Separate into benign and malignant groups
+benign_data <- ml_data[ml_data$Diagnosis == "B", ]
+malignant_data <- ml_data[ml_data$Diagnosis == "M", ]
+```
+
+The below code block takes 1000 random samples of size 30 from each (benign and malignant) dataset. The difference in means of each outcome group sample is calculated and used to perform a hypothesis test, which uses the default 95% confidence level as no conf.level argument is provided. The T-test is used when the benign outcome group, malignant group, and entire dataset are normally distributed. Otherwise, the Mann-Whitney U test is used. The confidence interval (CI) is extracted from the hypothesis test results and stored in a dataframe, where the length of the CI is calculated. The difference in means of each outcome group population is calculated and the data frame is analyzed to determine the percentage of CIs that contain the population difference of means. This process is repeated for all of the applicable features in the breast cancer data. For each, the mean CI length, population difference of means, and percentage of CIs that contained the population difference of means are stored in a summary data frame.
+
+Next, the 95% CI is calculated for the entire dataset for each feature. A plot is created visualizing all of the CIs from the random samples, as well as the CI for the entire dataset on the far right of the plot. Inspecting each of these plots shows that for all of the features in this dataset, the CI for the entire dataset was much narrower than any of the CIs of the random samples. This makes sense because small samples must have wider CIs to account for variation across the population.
+
+Display of the summary data frame shows that for most of the features, at least 95% of the calculated CIs contained the population value of the sample statistic, which in this case was the difference of means. This is consistent with the definition of a 95% CI. The reason that a few features resulted in a little less than 95% is likely because the Mann-Whitney U test does not make assumptions about the underlying distribution and is not quite as accurate as the T-test. The highest differences of means were observed in the area1 and perimeter1 features.
+
+```{r q1, warning = FALSE}
+library(ggplot2)
+
+# Select first set of features to calculate CIs on (exclude ID and Diagnosis)
+features <- ml_col_names[3:12]
+# Initialize results_df variable to store CI results
+results_df <- NULL
+
+# Loop through features
+for (feature in features){
+  # Perform Shapiro-Wilks normality test to determine which hypothesis test to use
+  sw_results_benign <- shapiro.test(benign_data[[feature]])$p.value
+  sw_results_malignant <- shapiro.test(benign_data[[feature]])$p.value
+  sw_results_all <- shapiro.test(ml_data[[feature]])$p.value
+  
+  # Obtain 1000 confidence intervals 
+  conf_ints <- replicate(1000, expr={
+    # Take random sample of symmetry from each group
+    benign_sample <- sample(benign_data[[feature]], 30)
+    malignant_sample <- sample(malignant_data[[feature]], 30)
+    # Compute difference in means
+    mean_diff <- mean(benign_sample) - mean(malignant_sample)
+    
+    
+    
+    # Construct 95% confidence interval for difference in means
+    if (sw_results_benign >= 0.05 & sw_results_malignant >= 0.05 & sw_results_all >= 0.05){
+      conf_int <- t.test(benign_sample, malignant_sample, mu=mean_diff)$conf.int
+    } else{
+      # Mann-Whitney U test for non-parametric distributions
+      conf_int <- wilcox.test(benign_sample, malignant_sample, mu=mean_diff, conf.int = TRUE)$conf.int
+    }
+    
+    return(conf_int)
+  })
+  
+  conf_ints_df <- as.data.frame(t(conf_ints))
+  names(conf_ints_df) <- c("Low", "High")
+  
+  # Get all CI lengths
+  conf_ints_df$Length <- conf_ints_df$High - conf_ints_df$Low
+  # Get avg. CI length
+  mean_ci_length <- mean(conf_ints_df$Length)
+  
+  # Population difference between means
+  pop_mean_diff <- mean(benign_data[[feature]]) - mean(malignant_data[[feature]])
+  
+  # How often the confidence intervals contain the population level difference
+  conf_ints_df$Population_Diff <- ifelse(pop_mean_diff >= conf_ints_df$Low & pop_mean_diff <= conf_ints_df$High, 1, 0)
+  
+  pct_occurence <- (sum(conf_ints_df$Population_Diff) / 1000) * 100
+  
+  # Add results to data frame
+  if (is.null(results_df)){
+    results_df <- data.frame(Feature=feature, 
+                        Mean_CI_Length=mean_ci_length, 
+                        Pop_Diff=pop_mean_diff,
+                        Pct_Occur=pct_occurence
+                        )
+  } else{
+    results_df <- rbind(results_df, 
+                   c(Feature=feature, 
+                        Mean_CI_Length=mean_ci_length, 
+                        Pop_Diff=pop_mean_diff,
+                        Pct_Occur=pct_occurence
+                     ))
+  }
+  
+  # Construct 95% confidence interval for difference in entire dataset
+  if (sw_results_benign >= 0.05 & sw_results_malignant >= 0.05 & sw_results_all >= 0.05){
+    pop_conf_int <- t.test(benign_data[[feature]], malignant_data[[feature]], mu=pop_mean_diff)$conf.int
+  } else{
+    # Mann-Whitney U test for non-parametric distributions
+    pop_conf_int <- wilcox.test(benign_data[[feature]], malignant_data[[feature]], mu=pop_mean_diff, conf.int = TRUE)$conf.int
+  }
+  pop_ci_length <- pop_conf_int[2] - pop_conf_int[1]
+  
+  # Add plotting info to data frame
+  conf_ints_df$x <- c(1:1000)
+  conf_ints_df$y <- pop_mean_diff
+  # Add entire dataset CI to data frame for plotting
+  conf_ints_df[nrow(conf_ints_df) + 1,] <- c(pop_conf_int[1], pop_conf_int[2], pop_ci_length, NA, 1100, pop_mean_diff)
+  
+  # Plot CIs for random samples vs entire dataset
+  plot <- ggplot(conf_ints_df, aes(x=x)) + 
+    # geom_point() +
+    geom_errorbar(aes(ymax = High, ymin = Low)) +
+    theme(axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank()) + 
+    ggtitle(paste0(feature, " Confidence Intervals for Random Samples (left) vs. Entire Dataset (right)")) +
+    ylab("Confidence Interval")
+  print(plot)
+}
+
+# Display results
+print(results_df)
+
+```
+
+## Question 2
+
+Chosen dataset: Skeletal muscle in 20 healthy patients (used as control for sarcopenia study)
+
+Experiment type: Expression profiling by high throughput sequencing
+
+GSEXXX number: GSE226151
+
+gplXXX number: GPL16791
+
+Code to download expression data:
+
+```{r download, message = FALSE, warning = FALSE}
+# Define download function for RNAseq dataset
+GEODataDownload <- function(DS, gpl, gsm, batch_correction=FALSE){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  # Set up query parameters and path for expression data
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&")
+  # Get expression data
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+  exraw <- tbl 
+  # Get annotation data
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # Subset to only needed tables
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  tbl <- tbl[ ,sel]
+  # Split into groups
+  gs <- factor(sml)
+  groups <- make.names(c("Ctrl", "Tx"))
+  levels(gs) <- groups
+  sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+  keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+  tbl <- tbl[keep, ]
+  if (length(unique(gs)) == 1){
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~1)
+  } else{
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~Group)
+  }
+  # Obtain normalized count values
+  if (batch_correction){
+    est <- estimateSizeFactors(ds)
+    NormCounts <- counts(est, normalized = TRUE)
+  } else{
+    NormCounts <- tbl
+  }
+
+  # Merge expression and annotation data
+  tT <- merge(as.data.frame(NormCounts), annot, by=0, sort=F)
+  # Adjust column names
+  setnames(tT, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+  return(tT)
+}
+
+# Execute download function
+RNA_Seq_Data <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "00000000000000000000XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+```
+
+Code to load sample metadata:
+
+```{r manipulate, warning = FALSE, message=FALSE}
+library(dplyr)
+
+# Read sample metadata
+metadata_path <- "/Users/ritapecuch/Downloads/SraRunTable.txt"
+metadata <- read.table(metadata_path, sep=",", header=TRUE) %>%
+  select(Sample.Name, AGE, BMI)
+```
+
+The below code block fits a linear model to the relationship between the independent variable, age, and the dependent variable, expression level, of each gene. The anova() function is used to calculate the significance level and the conf_int() function is used to obtain the 95% confidence interval. These results are added to a dataframe and sorted in ascending order by p-value. The CIs from this sorted data are then plotted. The plot visualizes a wide variety of CI widths across this dataset, and no clear relationship between p-value and CI width. This makes sense because each gene has varying levels of expression, and the coefficient for a linear relationship between age and gene expression will vary.
+
+Next, the data frame is subsetted to only the genes with the lowest and highest p-values. The results show that the RNLS gene has the lowest p-value and therefore the greatest association with age. The CI of approximately -7.6 to -3.5 shows a predicted range of coefficients for a linear model between age and RNLS expression. The negativity shows a predicted inverse relationship between age and RNLS expression. The LOC105374739 gene has the highest possible p-value (p = 1), and therefore extremely low probability of association with age. The narrow CI of approximately -0.1 to 0.1 shows a predicted coefficient of approximately 0 for a linear model between age and LOC105374739 expression.
+
+```{r q2, message=FALSE, warning = FALSE}
+library(tidyr)
+library(dplyr)
+
+# Vector of values for independent variable (age)
+sample_cols <- names(RNA_Seq_Data)[grep("^GSM", names(RNA_Seq_Data))]
+ages <- sapply(sample_cols, function(x) metadata[metadata$Sample.Name == x, "AGE"])
+
+# Loop through genes
+  for (row in 1:nrow(RNA_Seq_Data)){
+    # Vector of values for dependent variable (gene expression)
+    exp_levels <- sapply(sample_cols, function(x) RNA_Seq_Data[row, x])
+    # Fit linear model of age effect on gene expression
+    model <- lm(exp_levels ~ ages)
+    # Get p-value
+    p_value <- anova(model)[1, "Pr(>F)"]
+    # Calculate confidence interval
+    conf_int <- confint(model, parm="ages")
+    
+    # Add p-value and CI to dataframe
+    RNA_Seq_Data[row, "P_Value"] <- p_value
+    RNA_Seq_Data[row, "CI_Low"] <- conf_int[1]
+    RNA_Seq_Data[row, "CI_High"] <- conf_int[2]
+  }
+
+# Sort by p-value
+RNA_Seq_Data_sorted <- RNA_Seq_Data[order(RNA_Seq_Data$P_Value), ]
+
+# Plot CI values
+plot <- ggplot(RNA_Seq_Data_sorted, aes(x=c(1:nrow(RNA_Seq_Data_sorted)))) +
+    # geom_point() +
+    geom_errorbar(aes(ymax = CI_High, ymin = CI_Low)) +
+    theme(axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank()) +
+    ggtitle(paste0("Confidence Intervals for Age Effect on Gene Expression")) +
+    ylab("Confidence Interval")
+
+print(plot)
+
+# CIs for genes with the greatest and lowest predictive relationship
+ci_table <- RNA_Seq_Data_sorted %>%
+  drop_na(P_Value) %>%
+  select(ENTREZID, SYMBOL, GENENAME, P_Value, CI_Low, CI_High)
+ci_table <- ci_table[c(1, nrow(ci_table)), ]
+
+print(ci_table)
+
+```
+

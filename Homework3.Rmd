@@ -1,0 +1,332 @@
+---
+title: "RBIF111 Homework 3"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Chosen dataset: Skeletal muscle in 20 healthy patients (used as control for sarcopenia study)
+
+Experiment type: Expression profiling by high throughput sequencing
+
+GSEXXX number: GSE226151
+
+gplXXX number: GPL16791
+
+Code to download expression data:
+
+```{r download, message = FALSE, warning = FALSE}
+# Define download function for RNAseq dataset
+GEODataDownload <- function(DS, gpl, gsm, batch_correction=FALSE){
+  library(DESeq2)
+  library(limma)
+  library(data.table)
+  
+  # Set up query parameters and path for expression data
+  ACC <- paste("acc=", DS, sep = "")
+  file <- paste("file=", DS, "_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep = "")
+  urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+  path <- paste(urld, ACC, file, sep="&")
+  # Get expression data
+  tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames="GeneID")
+  exraw <- tbl 
+  # Get annotation data
+  apath <- paste(urld, "type=rnaseq_counts", "file=Human.GRCh38.p13.annot.tsv.gz", sep="&")
+  annot <- data.table::fread(apath, header=T, quote="", stringsAsFactors=F, data.table=F)
+  rownames(annot) <- annot$GeneID
+  # Subset to only needed tables
+  comp <- gsub(" ", "", gsm)
+  comp <- gsub(",", "", comp)
+  gsms <- paste0(comp)
+  sml <- strsplit(gsms, split="")[[1]]
+  sel <- which(sml != "X")
+  sml <- sml[sel]
+  tbl <- tbl[ ,sel]
+  # Split into groups
+  gs <- factor(sml)
+  groups <- make.names(c("Ctrl", "Tx"))
+  levels(gs) <- groups
+  sample_info <- data.frame(Group = gs, row.names = colnames(tbl))
+  keep <- rowSums( tbl >= 10 ) >= min(table(gs))
+  tbl <- tbl[keep, ]
+  if (length(unique(gs)) == 1){
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~1)
+  } else{
+    ds <- DESeqDataSetFromMatrix(countData=tbl, colData=sample_info, design= ~Group)
+  }
+  # Obtain normalized count values
+  if (batch_correction){
+    est <- estimateSizeFactors(ds)
+    NormCounts <- counts(est, normalized = TRUE)
+  } else{
+    NormCounts <- tbl
+  }
+
+  # Merge expression and annotation data
+  tT <- merge(as.data.frame(NormCounts), annot, by=0, sort=F)
+  # Adjust column names
+  setnames(tT, c("GeneID", "Symbol", "Description"), c("ENTREZID", "SYMBOL", "GENENAME"))
+  return(tT)
+}
+
+# Execute download function
+RNA_Seq_Data <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "00000000000000000000XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+```
+
+Code to load sample metadata:
+
+```{r manipulate, warning = FALSE, message=FALSE}
+library(dplyr)
+
+# Read sample metadata
+metadata_path <- "/Users/ritapecuch/Downloads/SraRunTable.txt"
+metadata <- read.table(metadata_path, sep=",", header=TRUE) %>%
+  select(Sample.Name, AGE, BMI)
+```
+
+## Question 1
+
+Objective: Find genes in the downloaded data set with the most and the least significant effect on the continuous variable (dependent variable). Next, plot the distribution of p-values for gene effect on age for all of the genes. Then generate diagnostic plots and present model summaries and ANOVA results for the linear models of the two extreme cases – the gene with the most and with the least significant effect as assessed by ANOVA.
+
+The below code block loops through the different genes in the gene expression dataset and fits a linear model to the relationship between the expression level, the independent variable, and age, the dependent variable. The anova() function is then used to calculate the significance level of the fit. The p-value for each iteration of the loop is added to the gene expression dataset for the corresponding gene. The hist() function is used to visualize the distribution of the p-values, which appears to be a fairly even distribution.
+
+``` {r q1, warning = FALSE}
+# Vector of values for dependent variable
+sample_cols <- names(RNA_Seq_Data)[grep("^GSM", names(RNA_Seq_Data))]
+ages <- sapply(sample_cols, function(x) metadata[metadata$Sample.Name == x, "AGE"])
+
+run_anova_batch <- function(df){
+  # Loop through genes
+  for (row in 1:nrow(df)){
+    # Vector of values for independent variable
+    exp_levels <- sapply(sample_cols, function(x) df[row, x])
+    # Fit linear model and calculate significance level
+    sig <- anova(lm(ages ~ exp_levels))
+    # Extract p-value and add to data frame
+    df[row, "P_Value"] <- sig[1, "Pr(>F)"]
+  }
+  return(df)
+}
+
+RNA_Seq_Data <- run_anova_batch(RNA_Seq_Data)
+# Plot distributions of p-values for gene expression effect on age
+p_values <- na.omit(RNA_Seq_Data$P_Value)
+hist(p_values, main="P-Values for Gene Expression Effect on Age")
+```
+
+The below code block generates diagnostic plots and ANOVA results for the gene with the most significant effect on age and the gene with the least significant effect on age.
+
+The gene with the most significant effect on age is selected by finding the gene whose linear model had the lowest p-value. The Residuals vs Fitted plot for this gene shows that the variance of residuals is not uniform, indicating that this model may not be a great fit. The Q-Q Residuals plot shows points far away from the reference line in several locations, indicating that the distribution of residuals is not likely a normal distribution. This is of concern because the lm() function operates under the assumption that the noise distribution is normal. The Scale-Location plot shows that the variance of residuals is not uniform, further supporting that this model may not be a great fit. The Residuals vs Leverage plot shows a few points that are high residuals, but not relatively high leverage points. This means that even though these points are not fit well, they are relatively close to the center of data and are not pulling the model toward themselves as much as points that are further from the center of data. The ANOVA results show a very low p-value, indicating a statistically significant relationship between the expression of this gene and age. However, residuals are present which indicates the presence of unexplained variation, and other factors that could affect this relationship should be researched.
+
+The gene with the least significant effect on age is selected by finding the gene whose linear model had the highest p-value. The Residuals vs Fitted plot for this gene shows a uniform distribution of variance of residuals, indicating that this model is likely a good fit. The Q-Q Residuals plot shows a few points far away from the reference line, indicating that the distribution of residuals may not be a normal distribution. This is of concern because the lm() function operates under the assumption that the noise distribution is normal. The Scale-Location plot shows that the variance of residuals is uniform, further supporting that this model may is likely a good fit. The Residuals vs Leverage plot shows a few points that are high residuals, but not high leverage points. This means that even though these points are not fit well, they are relatively close to the center of data and are not pulling the model toward themselves as much as points that are further from the center of data. The ANOVA results show the highest possible p-value, indicating an extremely unlikely relationship between the expression of this gene and age. However, residuals are present which indicates the presence of unexplained variation, and other factors that could affect these results should be researched.
+
+```{r q1 pt2, warning = FALSE}
+library(dplyr)
+
+# Gene with most significant effect
+max_effect_gene <- RNA_Seq_Data %>%
+  filter(P_Value == min(RNA_Seq_Data$P_Value, na.rm=T))
+# Fit linear model
+max_exp_levels <- sapply(sample_cols, function(x) max_effect_gene[1, x])
+max_model <- lm(ages ~ max_exp_levels)
+# Diagnostic plots
+plot(max_model)
+# ANOVA results
+print(anova(max_model))
+
+# Gene with least significant effect
+min_effect_gene <- RNA_Seq_Data %>%
+  filter(P_Value == max(RNA_Seq_Data$P_Value, na.rm=T))
+# Fit linear model
+min_exp_levels <- sapply(sample_cols, function(x) min_effect_gene[1, x])
+min_model <- lm(ages ~ min_exp_levels)
+# Diagnostic plots
+plot(min_model)
+# ANOVA results
+print(anova(min_model))
+```
+
+## Question 2
+
+Objective: Using the same data set as question 1, perform the same analysis except this time, perform a batch correction on the data set prior prior to fitting the models. Generate the same plots as described in question 1. Describe the results and how they compare to the results of question 1. Then discuss which approach produces “better” results and why.
+
+Code to download expression data with batch correction applied:
+
+``` {r q2 download, message = FALSE, warning = FALSE}
+# Execute download function with batch correction applied
+RNA_Seq_Data_Corrected <- GEODataDownload(DS = "GSE226151", gpl = "GPL16791", gsm = "00000000000000000000XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", batch_correction=TRUE)
+```
+
+The below code bock creates a boxplot to compare the pre- and post- batch corrected expression levels for each sample in the dataset. There do not appear to be major distribution differences in any of the samples. A slightly greater spread of values is seen in the batch-corrected data for samples GSM7065818, GSM7065819, GSM7065821, GSM7065822, GSM7065826, GSM7065827, GSM7065828, GSM7065830, and GSM7065835. A slightly greater spread of values is seen in the pre- batch corrected data for samples GSM7065820, GSM7065823, GSM7065824, GSM7065825, GSM7065831, GSM7065833, GSM7065834, GSM7065836, and GSM7065837.
+
+``` {r q2 compare, warning=FALSE}
+# Compare pre- and post- batch corrected datasets for each sample
+for (sample_col in sample_cols){
+  # Add pre- batch corrected data
+  sample_df <- data.frame(Expression=RNA_Seq_Data[[sample_col]])
+  sample_df$Type <- "Not Batch Corrected"
+  # Add post- batch corrected data
+  corrected_df <- data.frame(Expression=RNA_Seq_Data_Corrected[[sample_col]])
+  corrected_df$Type <- "Batch Corrected"
+  # Combine into single df
+  sample_df <- rbind(sample_df, corrected_df)
+  # Create boxplot
+  boxplot(sample_df$Expression~sample_df$Type, main=paste0("Gene Expression Levels for Sample ", sample_col))
+}
+```
+
+The below code block loops through the different genes in the batch-corrected gene expression dataset and fits a linear model to the relationship between the expression level, the independent variable, and age, the dependent variable. The anova() function is then used to calculate the significance level of the fit. The p-value for each iteration of the loop is added to the batch-corrected gene expression dataset for the corresponding gene. The hist() function is used to visualize the distribution of the p-values, which appears to be a fairly even distribution. There do not appear to be large distribution differences compared to the distribution seen in the pre- batch corrected data. Slightly higher frequencies of p-values < 0.2 and slightly lower frequencies of p-values between 0.4 and 0.8 are seen in the batch-corrected data.
+
+``` {r q2, warning=FALSE}
+RNA_Seq_Data_Corrected <- run_anova_batch(RNA_Seq_Data_Corrected)
+# Plot distributions of p-values for gene expression effect on age
+p_values_corrected <- na.omit(RNA_Seq_Data_Corrected$P_Value)
+hist(p_values_corrected, main="Batch-Corrected P-Values for Gene Expression Effect on Age")
+# Plot non-batch corrected histogram for comparison
+hist(p_values, main="P-Values for Gene Expression Effect on Age")
+```
+
+The below code block generates diagnostic plots and ANOVA results for the gene with the most significant effect on age and the gene with the least significant effect on age after batch correction.
+
+The gene with the most significant effect on age is selected by finding the gene whose linear model had the lowest p-value. The Residuals vs Fitted plot for this gene shows that the variance of residuals is not uniform, indicating that this model may not be a great fit. Compared with the pre- batch corrected plot, the variance in residuals appears slightly more uniform. The Q-Q Residuals plot shows points away from the reference line in several locations, but not too far away, indicating that the distribution of residuals is may be close to a normal distribution. This is important because the lm() function operates under the assumption that the noise distribution is normal. Compared with the pre- batch corrected plot, the residuals are closer to the reference line and therefore closer to normal distribution. The Scale-Location plot shows that the variance of residuals is not uniform, further supporting that this model may not be a great fit. Compared with the pre- batch corrected plot, the variance in residuals appears slightly more uniform. The Residuals vs Leverage plot shows a few points that are high residuals, but not relatively high leverage points. This means that even though these points are not fit well, they are relatively close to the center of data and are not pulling the model toward themselves as much as points that are further from the center of data. Compared with the pre- batch corrected plot, there appears to be a few more moderately high residuals with high leverage. The ANOVA results show a very low p-value, indicating a statistically significant relationship between the expression of this gene and age. However, residuals are present which indicates the presence of unexplained variation, and other factors that could affect this relationship should be researched. Compared with the pre- batch corrected results, the results show a higher p-value and higher residuals.
+
+The gene with the least significant effect on age is selected by finding the gene whose linear model had the highest p-value. The Residuals vs Fitted plot for this gene shows that the variance of residuals is not uniform, indicating that this model may not be a great fit. Compared with the pre- batch corrected plot, the variance of residuals is much less uniform. The Q-Q Residuals plot shows points away from the reference line in several locations, but not too far away, indicating that the distribution of residuals may be close to a normal distribution. This is important because the lm() function operates under the assumption that the noise distribution is normal. Compared with the pre- batch corrected plot, the distribution of residuals appears similar. The Scale-Location plot shows that the variance of residuals is not uniform, further supporting that this model may not be a great fit. Compared with the pre- batch corrected plot, the variance of residuals is much less uniform. The Residuals vs Leverage plot shows a few points that are high residuals, but not high leverage points. This means that even though these points are not fit well, they are relatively close to the center of data and are not pulling the model toward themselves as much as points that are further from the center of data. Compared with the pre- batch corrected plot, the results appear similar, with a few lower residual points. The ANOVA results show the highest possible p-value, indicating an extremely unlikely relationship between the expression of this gene and age. However, residuals are present which indicates the presence of unexplained variation, and other factors that could affect these results should be researched. Compared with the pre- batch corrected plot, the p-value and residuals are the same.
+
+```{r q2 pt2, warning = FALSE}
+library(dplyr)
+
+# Gene with most significant effect
+max_effect_gene_c <- RNA_Seq_Data_Corrected %>%
+  filter(P_Value == min(RNA_Seq_Data_Corrected$P_Value, na.rm=T))
+# Fit linear model
+max_exp_levels_c <- sapply(sample_cols, function(x) max_effect_gene_c[1, x])
+max_model_c <- lm(ages ~ max_exp_levels_c)
+# Diagnostic plots
+plot(max_model_c)
+# ANOVA results
+print(anova(max_model_c))
+
+# Gene with least significant effect
+min_effect_gene_c <- RNA_Seq_Data_Corrected %>%
+  filter(P_Value == max(RNA_Seq_Data_Corrected$P_Value, na.rm=T))
+# Fit linear model
+min_exp_levels_c <- sapply(sample_cols, function(x) min_effect_gene_c[1, x])
+min_model_c <- lm(ages ~ min_exp_levels_c)
+# Diagnostic plots
+plot(min_model_c)
+# ANOVA results
+print(anova(min_model_c))
+```
+
+The below code block generates a boxplot that compares the distribution of residuals for the linear models of pre- and post- batch data for the gene with the most significant effect. Then, a boxplot is generated for each linear model comparing the distribution of fitted and observed values. 
+
+The residuals boxplot shows a greater spread of residuals and no outliers in the batch corrected model compared to the pre- batch corrected model. The 2 boxplots of observed and fitted values show interesting results. The distributions of observed values are much different between the pre- and post- batch corrected data, indicating that the batch correction likely impacted the p-values enough that the gene with the maximum effect on significance is different in each dataset. Due to this occurrence, it is difficult to assess which is a better linear fit. On average, it appears that observed values in the pre- batch corrected model are about 3 times greater than the fitted values. On average, it appears that observed values in the post- batch corrected model are about 6 times less than the fitted values. Based on this comparison and the distributions of residuals, it appears that the pre- batch corrected data has produced a slightly better model, although it is still not a great linear fit. 
+
+```{r q2 pt3, warning=FALSE}
+# Add pre- batch corrected residuals
+resid_df <- data.frame(Residuals=resid(max_model))
+resid_df$Type <- "Not Batch Corrected"
+# Add post- batch corrected data
+corrected_resid_df <- data.frame(Residuals=resid(max_model_c))
+corrected_resid_df$Type <- "Batch Corrected"
+# Combine into single df
+resid_df <- rbind(resid_df, corrected_resid_df)
+# Create boxplot comparing residuals
+boxplot(resid_df$Residuals~resid_df$Type, main="Distribution of Residuals for Most Significant Gene")
+
+# Add fitted values
+compare_df <- data.frame(Values=predict(max_model))
+compare_df$Type <- "Fitted"
+# Add observed values
+observed_df <- data.frame(Values=max_exp_levels)
+observed_df$Type <- "Observed"
+# Combine into single df
+compare_df <- rbind(compare_df, observed_df)
+# Create boxplot for fitted vs observed
+boxplot(compare_df$Values~compare_df$Type, main="Pre- Batch Corrected Most Significant Gene")
+
+# Add fitted values
+compare_df <- data.frame(Values=predict(max_model_c))
+compare_df$Type <- "Fitted"
+# Add observed values
+observed_df <- data.frame(Values=max_exp_levels_c)
+observed_df$Type <- "Observed"
+# Combine into single df
+compare_df <- rbind(compare_df, observed_df)
+# Create boxplot for fitted vs observed
+boxplot(compare_df$Values~compare_df$Type, main="Batch Corrected Most Significant Gene")
+```
+
+The below code block generates a boxplot that compares the distribution of residuals for the linear models of pre- and post- batch data for the gene with the least significant effect. Then, a boxplot is generated for each linear model comparing the distribution of fitted and observed values.
+
+The residuals boxplot shows that the pre- batch corrected model shows a slightly greater spread of residuals compared to the batch corrected model on the boxplot. When comparing the 2 boxplots of fitted and observed values, the distributions of fitted values are approximately the same. The distribution of the observed values is slightly narrower in the batch corrected data compared to the pre- batch corrected data. Because the size of the spread of observed values in the batch corrected data more closely resembles the size of the spread of the fitted values, it appears that the batch corrected data has produced a slightly better fit.
+
+``` {r q2 pt4, warning=FALSE}
+# Add pre- batch corrected residuals
+resid_df <- data.frame(Residuals=resid(min_model))
+resid_df$Type <- "Not Batch Corrected"
+# Add post- batch corrected data
+corrected_resid_df <- data.frame(Residuals=resid(min_model_c))
+corrected_resid_df$Type <- "Batch Corrected"
+# Combine into single df
+resid_df <- rbind(resid_df, corrected_resid_df)
+# Create boxplot comparing residuals
+boxplot(resid_df$Residuals~resid_df$Type, main="Distribution of Residuals for Least Significant Gene")
+
+# Add fitted values
+compare_df <- data.frame(Values=predict(min_model))
+compare_df$Type <- "Fitted"
+# Add observed values
+observed_df <- data.frame(Values=min_exp_levels)
+observed_df$Type <- "Observed"
+# Combine into single df
+compare_df <- rbind(compare_df, observed_df)
+# Create boxplot for fitted vs observed
+boxplot(compare_df$Values~compare_df$Type, main="Pre- Batch Corrected Least Significant Gene")
+
+# Add fitted values
+compare_df <- data.frame(Values=predict(min_model_c))
+compare_df$Type <- "Fitted"
+# Add observed values
+observed_df <- data.frame(Values=min_exp_levels_c)
+observed_df$Type <- "Observed"
+# Combine into single df
+compare_df <- rbind(compare_df, observed_df)
+# Create boxplot for fitted vs observed
+boxplot(compare_df$Values~compare_df$Type, main="Batch Corrected Least Significant Gene")
+```
+
+## Question 3
+
+Objective: Using the gene with the greatest association to the dependent variable, study the relationship between the fitted data and the residual values by plotting the Fitted data points as well as the observed values.
+
+The below code block first plots the observed values of the data against the fitted values using the above-generated linear model for the gene with the greatest association to age. The results show that the observed values are much different than the fitted values, no matter which value is used for the y-intercept. This indicates that this is not a great fit for the data.
+
+Then, a plot is generated of the residuals against the fitted values. The results show that the variance of residuals is not uniform, indicating that this model may not be a great fit for the data.
+
+``` {r q3, warning=FALSE}
+# Obtain fitted values
+predict <- predict(max_model)
+# Obtain observed values
+observed <- max_exp_levels
+# Obtain residual values
+resid <- resid(max_model)
+
+# Plot observed vs fitted, use a few different values for y-intercept as there is a negative slope
+plot(predict, observed, xlab="Fitted",ylab="Observed")
+abline(325,-1,lty=2)
+
+plot(predict, observed, xlab="Fitted",ylab="Observed")
+abline(250,-1,lty=2)
+
+plot(predict, observed, xlab="Fitted",ylab="Observed")
+abline(200,-1,lty=2)
+
+# Plot residuals vs fitted
+plot(predict, resid, xlab="Fitted", ylab="Residuals")
+abline(h=0, lty=2)
+```

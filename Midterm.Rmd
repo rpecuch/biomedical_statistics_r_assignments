@@ -1,0 +1,239 @@
+---
+title: "RBIF111 Midterm Exam"
+author: "Rita Pecuch"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+
+Objective: Investigate whether the ERBB2 (HER2) mRNA expression is significantly different between normal and tumor tissues.
+
+The below code block reads the mRNA expression data, which has a row for each gene and a column for each tissue sample, and the clinical data, which contains clinical information about each patient. Vectors of normal tissue sample IDs and tumor tissue sample IDs are obtained by reading the normal and tissue sample IDs of each patient from the clinical data. Vectors of normal and tissue sample ERBB2 mRNA expression levels are obtained by subsetting the mRNA expression data for the row containing the ERBB2 gene and only the needed sample IDs (column names).
+
+```{r q1 prep, warning=FALSE}
+# Read expression data
+setwd("~/Desktop/Brandeis/RBIF111/Week 5")
+exp_path <- paste0(getwd(), "/TCGA_BRCA_mRNA_expression.csv")
+exp_data <- read.csv(exp_path)
+
+# Read clinical data
+clinical_path <- paste0(getwd(), "/TCGA_BRCA_clinical_data.csv")
+clinical_data <- read.csv(clinical_path)
+
+# Get normal and tumor tissue sample names
+normal_tissues <- clinical_data$Sample_ID_Normal
+tumor_tissues <- clinical_data$Sample_ID_Tumor
+
+# Get normal and tumor tissue expression levels
+erbb2_exp_levels <- exp_data[exp_data$X == "ERBB2", ]
+normal_erbb2_exp <- unlist(erbb2_exp_levels[1,normal_tissues])
+tumor_erbb2_exp <- unlist(erbb2_exp_levels[1,tumor_tissues])
+```
+
+The below code block performs both an unpaired and paired Mann-Whitney U (MHU) test. The MHU test is chosen over the t-test due to the extremely high probability that the ERBB2 mRNA expression level samples from both normal and tumor tissues do not have an undlerlying normal distribution.
+
+The unpaired MHU test looks at differences between two groups and treats them as individual samples. In this case, the null hypothesis that is being tested is that mean ERBB2 mRNA expression is not significantly different between a dataset of all normal tissue samples and a dataset of all tumor tissue samples. The unpaired MHU test produced a p-value of 7.562e-07. 
+
+The paired MHU test looks at differences in a group at different points in time, and treats corresponding observations in each sample as "pairs". In this case, the null hypothesis that is being tested is that the mean ERRB2 mRNA expression level between normal tissue samples and their matching tumor tissue samples (matching meaning from the same patient) is not significantly different. The paired MHU test produced a p-value of 7.558e-08.
+
+For this analysis, the more appropriate test to use is the paired MHU test because the pairs in this case are the same patient at different stages in the disease process. Comparing the difference in ERBB2 mRNA expression level in each patient individually allows for control of confounding factors that could arise from individual variation. The paired MHU test p-value of 7.558e-08 is highly statistically significant, as there is a << 1% chance that the observed differences between mean ERBB2 mRNA expression levels are due to unexplained variation. Thus, the above null hypothesis is rejected.
+
+```{r q1, warning=FALSE}
+# Test normality of data
+shapiro_normal <- shapiro.test(normal_erbb2_exp)
+print(shapiro_normal)
+shapiro_tumor <- shapiro.test(tumor_erbb2_exp)
+print(shapiro_tumor)
+
+# Perform unpaired MHU test
+mhu_test_results <- wilcox.test(normal_erbb2_exp, tumor_erbb2_exp)
+print(mhu_test_results)
+
+# Perform paired MHU-test (order that normal and tumor exp levels are the same so samples match up)
+mhu_test_paired <- wilcox.test(normal_erbb2_exp, tumor_erbb2_exp, paired=TRUE)
+print(mhu_test_paired)
+```
+
+## Question 2
+
+Objective: Analyze the correlation between ERBB2 (HER2) mRNA expression and RPPA protein levels in HER2-IHC negative patients.
+
+The below code block reads the RPPA protein  data, which has a row for each protein and a column for each tissue sample. The clinical data is subsetted to only HER2-IHC negative patients by filtering the "IHCHER" column. A vector of HER2-IHC negative tissue sample IDs is obtained by reading all of the tissue sample IDs from this subsetted data frame. Then, a vector of ERBB2 mRNA expression levels of HER2-IHC negative patients is obtained by subsetting the mRNA expression data for the row containing the ERBB2 gene and only the needed sample IDs (those found in both the HER2-IHC negative tissue sample IDs and in the protein level data). Then, a data frame of RPPA protein data for HER2-IHC negative patients is obtained by subsettng the protein data to only the needed sample IDs (those found in both the HER2-IHC negative tissue sample IDs and in the protein level data). Finally, a vector of mean RPPA protein levels is constructed.
+
+``` {r q2 prep, warning=FALSE}
+# Read protein data
+setwd("~/Desktop/Brandeis/RBIF111/Week 5")
+protein_path <- paste0(getwd(), "/TCGA_BRCA_RPPA_protein_expression.csv")
+protein_data <- read.csv(protein_path)
+
+# Get HER2-IHC negative samples
+her2_ihc_negative <- clinical_data[clinical_data$IHCHER2 == "Negative",]
+her2_ihc_negative <- her2_ihc_negative[!is.na(her2_ihc_negative$IHCHER2),]
+hi_negative_samples <- c(her2_ihc_negative$Sample_ID_Tumor, her2_ihc_negative$Sample_ID_Normal)
+
+# Get ERBB2 mRNA expression level
+hi_neg_erbb2_exp <- unlist(erbb2_exp_levels[1,intersect(names(protein_data), hi_negative_samples)])
+
+# Get RPPA protein levels in HER2-IHC negative patients
+hi_neg_rppa_levels <- protein_data[,intersect(names(protein_data), hi_negative_samples)]
+# Get average RPPA protein levels
+avg_rppa_level <- apply(hi_neg_rppa_levels, MARGIN=2, mean, na.rm=T)
+```
+
+The Pearson correlation coefficient measures the strength of a linear correlation between two variables and takes on values between -1 and 1, with values closest to -1 and 1 representing the strongest associations. In this case, the null hypothesis that is being tested is the ERBB2 mRNA expression levels are not linearly correlated with RPPA protein levels in HER2-IHC negative patients. The results show a correlation coefficient of approximately -0.0008, which is extremely close to zero and indicates little to no correlation. Additionally, the high p-value of approximately 0.996 indicates an extremely high probability that the slight observed difference between the correlation coefficient and 0 is due to random sampling.
+
+In contrast, the Spearman correlation coefficient measures the strength of a correlation between two variables that is or is not linear. In this case, the null hypothesis that is being tested is the ERBB2 mRNA expression levels are not correlated with RPPA proteins levels in HER2-IHC negative patients. The results show a correlation coefficient of approximately -0.01, which is extremely close to zero and indicates little to no correlation. Additionally, the high p-value of approximately 0.92 indicates an extremely high probability that the slight observed difference between the correlation coefficient and 0 is due to random sampling.
+
+In this particular analysis, the more appropriate correlation method to use is the Spearman correlation coefficient because the objective is to determine if any association exists between ERBB2 mRNA expression levels and RPPA protein levels, not only linear. Additionally, the Pearson correlation coefficient is typically used with normally distributed data. As shown in the below Shapiro-Wilks normality test results, the ERBB2 mRNA expression level data is unlikely to have a normal underlying distribution. Based on the above described results from the Spearman correlation, the null hypothesis is accepted.
+
+```{r q2, warning=FALSE}
+# Calculate Pearson correlation coefficient
+pearson_results <- cor.test(hi_neg_erbb2_exp, avg_rppa_level, method = "pearson")
+print(pearson_results)
+# Calculate Spearman correlation coefficient
+spearman_results <- cor.test(hi_neg_erbb2_exp, avg_rppa_level, method = "spearman")
+print(spearman_results)
+
+# Test normality of data
+shapiro_erbb2 <- shapiro.test(hi_neg_erbb2_exp)
+print(shapiro_erbb2)
+shapiro_rppa <- shapiro.test(avg_rppa_level)
+print(shapiro_rppa)
+```
+
+## Question 3
+
+Objective: Perform a test to determine if there is a significant association between HER2-IHC and ER-IHC statuses in breast cancer patients.
+
+The below code block filters the clinical data for only IHC positive and negative records, as the statuses of "Indeterminate", "Equivocal", and NA will not be used in this analysis. A contingency table is constructed between ER-IHC and HER2-IHC statuses using the table() function.
+
+``` {r q3 prep, warning=FALSE, message=FALSE}
+library(dplyr)
+# Remove statuses that will not be considered
+clinical_data_clean <- clinical_data %>%
+  filter(ER_Status_By_IHC != "Indeterminate") %>%
+  filter(IHCHER2 != "Equivocal")
+# Construct contingency table (rows have ER-IHC statuses, columns have HER2-IHC statuses)
+cont_table <- table(clinical_data_clean$ER_Status_By_IHC, clinical_data_clean$IHCHER2)
+print(cont_table)
+```
+
+The below code block performs the Fisher's exact test and the Pearson's chi-squared test. The null hypothesis that is being tested is that there is not a significant association between HER2-IHC and ER-IHC statuses in breast cancer patients. The chi-squared test is performed with and without the Yates' continuity correction, and the p-value that is interpreted is the one that is closest to the p-value obtained from the Fisher's exact test. Both the Fisher's exact test and Chi-squared test produced a p-value of > 0.75, which is not statistically significant as there is approximately a 75% chance that the differences between observed and expected counts for each HER2-ER status combination are due to sampling variation. Thus, the null hypothesis is accepted.
+
+``` {r q3, warning=FALSE}
+# Perform Fisher's exact test
+fisher_results <- fisher.test(cont_table)
+p_value_fisher <- fisher_results$p.value
+# Perform chi-squared test with and without Yates’ continuity correction
+chi_sq_results_corrected <- chisq.test(cont_table)
+chi_sq_results <- chisq.test(cont_table, correct = F)
+# Use chi-square results that are closest to Fisher's test results
+p_value_chi <- ifelse(abs(fisher_results$p.value - chi_sq_results$p.value) < abs(fisher_results$p.value - chi_sq_results_corrected$p.value),
+                  chi_sq_results$p.value,
+                  chi_sq_results_corrected$p.value)
+print(paste0("Fisher's exact test: p-value = ", p_value_fisher, " Pearson's Chi-squared test: p-value = ", p_value_chi))
+```
+
+## Question 4
+
+Objective: Please construct a regression model with “fraction genome altered” as the input and “tumor mutation burden” (TMB_nonsynonymous) as the output.
+
+The below code block constructs a regression model for the relationship between fraction genome altered (FGA) and tumor mutation burden (TMB). The (Intercept) regression coefficient of approximately 1.24 indicates the y-intercept of the regression model. The clinical_data$Fraction_Genome_Altered regression coefficient of approximately 1.84 indicates the slope of the regression model when FGA is the independent variable. 
+
+Then, the 95% confidence interval (CI) for the regression coefficients is calculated. The results show a 95% confidence interval of approximately 0.7-1.8 for the y-intercept and a 95% confidence interval of approximately 0.36-3.32 for the slope. It is expected that 95% of the calculated CIs for the underlying population will contain the true underlying value for the sample statistic in each of these cases.
+
+Next, the ANOVA test is performed on the regression model and the p-value obtained for FGA is approximately 0.015, which means that there is a statistically significant reduction in unexplained variation by adding FGA into the model for determining TMB.
+
+Finally, the R-squared value is extracted from the regression model. The R-squared value is a measure of the proportion of variation in the dependent variable that can be explained by the independent variable to the total variation. This means that a higher R-squared value is indicative of a better regression model, and an R-squared value of 1 would indicate a perfect fit. In this case, the R-squared value is approximately 0.058, indicating that this model may not be the greatest fit.
+
+``` {r q4, warning=FALSE}
+# Construct regression model with FGA as independent variable and TMB as dependent variable
+model <- lm(clinical_data$TMB_nonsynonymous ~ clinical_data$Fraction_Genome_Altered)
+print(coef(model))
+# Calculate 95% confidence interval
+conf_int <- confint(model)
+print(conf_int)
+# Calculate p-value for FGA
+anova_results <- anova(model)
+print(anova_results)
+# Extract R-squared
+r_squared <- summary(model)$r.squared
+print(paste0("R-Squared: ", r_squared))
+```
+
+## Question 5
+
+Objective: Identify the genes most positively correlated with ERBB2 in normal and cancer samples.
+
+The below code block loops through all of the genes in the mRNA expression table and calculates the Pearson correlation with ERBB2 for both normal and tumor tissue samples. All of the correlation coefficients and p-values are saved. After the loop is complete, a multiple hypothesis testing correction is done on all of the p-values. The top 10 correlated genes in both normal and tumor tissues samples are displayed in the below tables with their correlation coefficients and adjusted p-values.
+
+```{r q5, warning=FALSE}
+# Initialize results_df variable to store results of correlation tests
+results_df_normal <- NULL
+results_df_tumor <- NULL
+
+# Loop through expression data
+for (row in c(1:nrow(exp_data))){
+  # Get gene expression levels in normal and tumor tissues
+  gene_exp_levels <- exp_data[row, ]
+  normal_gene_exp <- unlist(gene_exp_levels[1, normal_tissues])
+  tumor_gene_exp <- unlist(gene_exp_levels[1, tumor_tissues])
+  # Calculate Pearson correlation between ERBB2 and gene for normal samples
+  normal_cor <- cor.test(normal_gene_exp, normal_erbb2_exp, method ="pearson")
+  # Calculate Pearson correlation between ERBB2 and gene for tumor samples
+  tumor_cor <- cor.test(tumor_gene_exp, tumor_erbb2_exp, method ="pearson")
+  
+  # Save correlation coefficients and p-values
+  if (is.null(results_df_normal)){
+    results_df_normal <- data.frame(Gene=exp_data[row, "X"], 
+                        Coef=normal_cor$estimate, 
+                        P_Value=normal_cor$p.value
+                        )
+    results_df_tumor <- data.frame(Gene=exp_data[row, "X"], 
+                        Coef=tumor_cor$estimate, 
+                        P_Value=tumor_cor$p.value
+                        )
+  } else{
+    results_df_normal <- rbind(results_df_normal, 
+                   c(Gene=exp_data[row, "X"], 
+                        Coef=normal_cor$estimate, 
+                        P_Value=normal_cor$p.value
+                     ))
+    results_df_tumor <- rbind(results_df_tumor, 
+                   c(Gene=exp_data[row, "X"], 
+                        Coef=tumor_cor$estimate, 
+                        P_Value=tumor_cor$p.value
+                     ))
+  }
+}
+
+# Convert necessary columns to numeric type
+results_df_normal <- transform(results_df_normal,  
+               Coef = as.numeric(Coef),
+              P_Value = as.numeric(P_Value)
+          )
+results_df_tumor <- transform(results_df_tumor,  
+               Coef = as.numeric(Coef),
+              P_Value = as.numeric(P_Value)
+          )
+
+# Perform multiple hypothesis testing correction for p-values
+results_df_normal$Corrected_P_Value <- p.adjust(results_df_normal$P_Value)
+results_df_tumor$Corrected_P_Value <- p.adjust(results_df_tumor$P_Value)
+
+# Sort in descending order by Coef
+top_normal <- results_df_normal[order(results_df_normal$Coef, decreasing = T),]
+top_tumor <- results_df_tumor[order(results_df_tumor$Coef, decreasing = T),]
+# Remove ERBB2
+top_normal <- top_normal[top_normal$Gene != "ERBB2", ]
+top_tumor <- top_tumor[top_tumor$Gene != "ERBB2", ]
+# Report top 10 correlated genes
+print(head(top_normal, 10))
+print(head(top_tumor, 10))
+```
+
